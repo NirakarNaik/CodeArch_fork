@@ -50,3 +50,87 @@
     opacity: 1;
   }
 }
+
+/* Activity: importance still sets the hue (inline border/stripe); stale fades the content.
+   Dimming the children rather than the box keeps it independent of the fade-in opacity. */
+.graph-wrap .graph-node.activity-stale > .node-file,
+.graph-wrap .graph-node.activity-stale > .node-role {
+  opacity: 0.5;
+  filter: grayscale(0.6);
+}
+
+/* Cluster membership: background tint is inline; the dot makes it readable at a glance. */
+.graph-wrap .node-cluster-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* Highlights (flagged issue / stale / active cluster): one mechanism, colour via --hl.
+   Outline sits outside the border, so it layers over importance, activity and cluster styling. */
+.graph-wrap .graph-node.highlight {
+  outline: 2px solid var(--hl);
+  outline-offset: 3px;
+  animation: graphFadeIn 0.3s ease-in, graphHighlightPulse 1.6s ease-in-out infinite;
+}
+
+.graph-wrap .graph-node.highlight-stale {
+  outline-style: dashed;
+}
+
+@keyframes graphHighlightPulse {
+  0%,
+  100% {
+    outline-color: var(--hl);
+  }
+  50% {
+    outline-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-wrap .graph-node.highlight {
+    animation: graphFadeIn 0.3s ease-in;
+  }
+}
+
+.graph-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-3, #9092a3);
+}
+
+.graph-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.graph-key-ring {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  outline: 2px solid var(--hl);
+}
+
+.graph-key-item.highlight-stale .graph-key-ring {
+  outline-style: dashed;
+}
+
+.graph-key-tint {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.graph-cap-note {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-3, #9092a3);
+}

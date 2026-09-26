@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSSE } from "./hooks/useSSE.js";
-import GraphCanvas from "./GraphCanvas.jsx";
+import GraphCanvas, { buildHighlights } from "./GraphCanvas.jsx";
 import IssueReveal from "./IssueReveal.jsx";
 import ExploreStatus from "./ExploreStatus.jsx";
 import { createMockEventSource, FAKE_EVENTS } from "./mocks/mockEventSource.js";
@@ -73,7 +73,19 @@ export default function ExploreView({ repoUrl, demo = false, onReset, EventSourc
     };
   }, [demoMode, repoUrl, run]);
 
-  const { nodes, issue, status } = useSSE(streamUrl, { EventSourceImpl });
+  // `direction` (ProjectDirection) is also available here for Member 3's direction panel.
+  const { nodes, issue, direction, status } = useSSE(streamUrl, { EventSourceImpl });
+
+  // Files to call out on the graph, all through the same highlight mechanism.
+  const highlights = useMemo(
+    () =>
+      buildHighlights({
+        flagged: issue?.files,
+        stale: direction?.staleFiles,
+        active: (direction?.activeClusters || []).flatMap((c) => c?.files || []),
+      }),
+    [issue, direction]
+  );
 
   // useSSE resets while streamUrl is null, so only trust it once a stream for this run exists.
   const streaming = Boolean(streamUrl) && !startError;
@@ -95,7 +107,7 @@ export default function ExploreView({ repoUrl, demo = false, onReset, EventSourc
         onTryDemo={runDemo}
         onReset={onReset}
       />
-      {streaming && <GraphCanvas nodes={nodes} />}
+      {streaming && <GraphCanvas nodes={nodes} highlights={highlights} />}
       {streaming && issue && <IssueReveal issue={issue} />}
     </div>
   );

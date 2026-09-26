@@ -2,7 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import "./graph.css";
 
 export const COLORS = { core: "#5ec8f8", support: "#8f8fd6", config: "#f5b942" };
-const FALLBACK_COLOR = "#888";
+const FALLBACK_COLOR = "#888888";
+
+// Safety guard: the backend stops at 25 emit_node calls, but a misbehaving stream must not
+// be able to wreck the layout. Only the first 25 distinct nodes to arrive are rendered.
+export const MAX_NODES = 25;
+
+// Cluster tints, chosen to stay clear of the importance hues and the highlight colours.
+const CLUSTER_COLORS = ["#f472b6", "#c084fc", "#a3e635", "#fdba74", "#94a3b8"];
+
+// One highlight system for every "look at this file" reason. Earlier entries win when a
+// file qualifies for several.
+export const HIGHLIGHTS = {
+  flagged: { label: "Flagged issue", color: "#f07c7c" },
+  stale: { label: "Stale", color: "#fb923c" },
+  active: { label: "Active cluster", color: "#4fd1a5" },
+};
 
 const NODE_W = 200;
 const NODE_H = 72;
@@ -101,6 +116,31 @@ export function routeEdge(a, b, others, lane = 0) {
   return { d: roundedPath(points), routed: true };
 }
 
+// { flagged: [...files], stale: [...], active: [...] } -> Map(normalized file -> kind)
+export function buildHighlights(groups) {
+  const map = new Map();
+  for (const kind of Object.keys(HIGHLIGHTS)) {
+    for (const file of Array.isArray(groups[kind]) ? groups[kind] : []) {
+      if (typeof file !== "string") continue;
+      const key = normalize(file);
+      if (!map.has(key)) map.set(key, kind);
+    }
+  }
+  return map;
+}
+
+// clusterId -> colour, only for clusters shared by at least two rendered nodes, assigned in
+// order of first appearance so colours don't shuffle as nodes stream in.
+export function clusterColors(nodes) {
+  const counts = new Map();
+  for (const n of nodes) if (n.clusterId != null) counts.set(n.clusterId, (counts.get(n.clusterId) || 0) + 1);
+  const colors = new Map();
+  for (const [id, count] of counts) {
+    if (count >= 2) colors.set(id, CLUSTER_COLORS[colors.size % CLUSTER_COLORS.length]);
+  }
+  return colors;
+}
+
 function useContainerWidth(ref) {
   const [width, setWidth] = useState(1000);
   useEffect(() => {
@@ -142,11 +182,16 @@ export function buildEdges(nodes) {
   return edges;
 }
 
-export default function GraphCanvas({ nodes }) {
+export default function GraphCanvas({ nodes: allNodes, highlights = new Map() }) {
+  const nodes = allNodes.length > MAX_NODES ? allNodes.slice(0, MAX_NODES) : allNodes;
   const containerRef = useRef(null);
   const containerWidth = useContainerWidth(containerRef);
   const { positions, width, height } = layout(nodes, containerWidth);
   const edges = buildEdges(nodes);
+  const clusters = clusterColors(nodes);
+  const shownHighlights = Object.keys(HIGHLIGHTS).filter((kind) =>
+    nodes.some((n) => highlights.get(normalize(n.file)) === kind)
+  );
 
   return (
     <div className="graph-wrap">
@@ -177,27 +222,78 @@ export default function GraphCanvas({ nodes }) {
         {nodes.map((node) => {
           const p = positions.get(node.id);
           const color = COLORS[node.importance] || FALLBACK_COLOR;
+          const stale = node.activity === "stale";
+          // Importance sets the hue; activity sets the intensity (stale = faded, active = glow).
+          const edgeColor = stale ? `${color}59` : color;
+          const clusterColor = clusters.get(node.clusterId);
+          const highlight = highlights.get(normalize(node.file));
+          const details = [
+            node.file,
+            node.role,
+            node.imports?.length ? `imports: ${node.imports.join(", ")}` : null,
+            node.activity ? `activity: ${node.activity}` : null,
+            node.authorCount != null ? `authors: ${node.authorCount}` : null,
+            node.clusterId != null ? `cluster: ${node.clusterId}` : null,
+            highlight ? `highlighted: ${HIGHLIGHTS[highlight].label}` : null,
+          ];
           return (
             <div
               key={node.id}
               data-node-id={node.id}
-              className={`graph-node importance-${node.importance}`}
+              data-activity={node.activity || undefined}
+              data-cluster={clusterColor ? node.clusterId : undefined}
+              data-highlight={highlight}
+              className={[
+                "graph-node",
+                `importance-${node.importance}`,
+                node.activity && `activity-${node.activity}`,
+                highlight && `highlight highlight-${highlight}`,
+              ]
+                .filter(Boolean)
+                .join(" ")}
               style={{
                 left: p.x,
                 top: p.y,
                 width: NODE_W,
                 height: NODE_H,
-                borderColor: color,
-                boxShadow: `inset 4px 0 0 ${color}`,
+                borderColor: edgeColor,
+                boxShadow: [
+                  `inset 4px 0 0 ${edgeColor}`,
+                  node.activity === "active" && `0 0 16px -4px ${color}`,
+                ]
+                  .filter(Boolean)
+                  .join(", "),
+                backgroundImage: clusterColor ? `linear-gradient(${clusterColor}1f, ${clusterColor}1f)` : undefined,
+                "--hl": highlight ? HIGHLIGHTS[highlight].color : undefined,
               }}
-              title={`${node.file}\n${node.role}${node.imports?.length ? `\nimports: ${node.imports.join(", ")}` : ""}`}
+              title={details.filter(Boolean).join("\n")}
             >
+              {clusterColor && <span className="node-cluster-dot" style={{ background: clusterColor }} aria-hidden="true" />}
               <div className="node-file">{normalize(node.file)}</div>
               <div className="node-role">{node.role}</div>
             </div>
           );
         })}
       </div>
+      {(shownHighlights.length > 0 || clusters.size > 0) && (
+        <div className="graph-key">
+          {shownHighlights.map((kind) => (
+            <span key={kind} className={`graph-key-item highlight-${kind}`}>
+              <span className="graph-key-ring" style={{ "--hl": HIGHLIGHTS[kind].color }} aria-hidden="true" />
+              {HIGHLIGHTS[kind].label}
+            </span>
+          ))}
+          {[...clusters].map(([id, c]) => (
+            <span key={id} className="graph-key-item">
+              <span className="graph-key-tint" style={{ background: c }} aria-hidden="true" />
+              {id}
+            </span>
+          ))}
+        </div>
+      )}
+      {allNodes.length > MAX_NODES && (
+        <p className="graph-cap-note">Showing the first {MAX_NODES} of {allNodes.length} files.</p>
+      )}
     </div>
   );
 }

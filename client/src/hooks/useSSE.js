@@ -1,7 +1,19 @@
 import { useEffect, useReducer } from "react";
 
+/**
+ * Event shapes (see shared/types.ts, owned by Member 1). GraphNode may also carry
+ *   activity: "active" | "stale", authorCount: number, clusterId: string | null
+ * and the stream may send a final `direction` event. ProjectDirection isn't pinned down in
+ * shared/types.ts yet; the frontend only relies on these fields and treats the rest as optional:
+ *   { staleFiles?: string[], activeClusters?: { id?: string, label?: string, files: string[] }[] }
+ */
+
 // State shape mirrors AppState in shared/types.ts, narrowed to what the stream drives.
-const initialState = { nodes: [], issue: null, status: "connecting", errorMessage: null };
+const initialState = { nodes: [], issue: null, direction: null, status: "connecting", errorMessage: null };
+
+// `direction` may arrive after `done`, so the stream stays open after `done` until the server
+// ends it (which surfaces as an error event, ignored once done). This is only a backstop.
+export const DONE_GRACE_MS = 5000;
 
 function reducer(state, action) {
   switch (action.type) {
@@ -11,9 +23,9 @@ function reducer(state, action) {
       return state.status === "connecting" ? { ...state, status: "streaming" } : state;
     case "node": {
       const node = action.data;
-      // The backend mints a fresh random id per emit_node, so Claude recording the same file
-      // twice arrives as a new id. Match on id or path, and replace in place (keeping the
-      // original id so the box keeps its slot and doesn't re-fade).
+      // Ids aren't guaranteed stable across backends (the first one minted a random id per
+      // emit_node), so match on id or path and replace in place, keeping the original id so
+      // the box keeps its slot and doesn't re-fade.
       const key = normalizeFile(node.file);
       const i = state.nodes.findIndex((n) => n.id === node.id || normalizeFile(n.file) === key);
       const nodes =
@@ -24,6 +36,8 @@ function reducer(state, action) {
     }
     case "done":
       return { ...state, issue: action.data, status: "done" };
+    case "direction":
+      return { ...state, direction: action.data };
     case "error":
       if (state.status === "done") return state;
       return { ...state, status: "error", errorMessage: action.message };
@@ -56,6 +70,7 @@ export function useSSE(url, { EventSourceImpl } = {}) {
 
     const ES = EventSourceImpl || window.EventSource;
     const source = new ES(url);
+    let graceTimer = null;
 
     source.addEventListener("open", () => dispatch({ type: "open" }));
 
@@ -66,7 +81,12 @@ export function useSSE(url, { EventSourceImpl } = {}) {
 
     source.addEventListener("done", (e) => {
       dispatch({ type: "done", data: parse(e) ?? { issue: null, evidence: "", files: [] } });
-      source.close();
+      graceTimer = setTimeout(() => source.close(), DONE_GRACE_MS);
+    });
+
+    source.addEventListener("direction", (e) => {
+      const data = parse(e);
+      if (data && typeof data === "object") dispatch({ type: "direction", data });
     });
 
     // Fires for both server-sent `event: error` (has data) and connection failures (no data).
@@ -77,7 +97,10 @@ export function useSSE(url, { EventSourceImpl } = {}) {
       source.close();
     });
 
-    return () => source.close();
+    return () => {
+      clearTimeout(graceTimer);
+      source.close();
+    };
   }, [url, EventSourceImpl]);
 
   return state;

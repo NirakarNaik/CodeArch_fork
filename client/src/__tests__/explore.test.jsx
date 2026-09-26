@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, renderHook, act, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { useSSE } from "../hooks/useSSE.js";
-import GraphCanvas, { buildEdges, layout, routeEdge } from "../GraphCanvas.jsx";
+import GraphCanvas, { buildEdges, buildHighlights, layout, routeEdge, MAX_NODES } from "../GraphCanvas.jsx";
+import { DONE_GRACE_MS } from "../hooks/useSSE.js";
 import ExploreView, { DEMO_URL } from "../ExploreView.jsx";
 import { createMockEventSource, FAKE_EVENTS } from "../mocks/mockEventSource.js";
 
@@ -34,7 +35,11 @@ describe("useSSE", () => {
     act(() => src.emit("done", ISSUE));
     expect(result.current.status).toBe("done");
     expect(result.current.issue).toEqual(ISSUE);
+    // Stays open for a trailing `direction` event; the server ending the stream closes it.
+    expect(src.readyState).toBe(1);
+    act(() => src.fail());
     expect(src.readyState).toBe(2);
+    expect(result.current.status).toBe("done");
   });
 
   it("replaces a re-emitted node id instead of duplicating it", () => {
@@ -86,7 +91,7 @@ describe("useSSE", () => {
     act(() => vi.advanceTimersByTime(300));
     expect(result.current.nodes).toHaveLength(1);
     act(() => vi.runAllTimers());
-    expect(result.current.nodes).toHaveLength(FAKE_EVENTS.length - 1);
+    expect(result.current.nodes).toHaveLength(FAKE_EVENTS.filter((e) => e.type === "node").length);
     expect(result.current.status).toBe("done");
   });
 });
@@ -256,5 +261,138 @@ describe("ExploreView", () => {
     await act(async () => {});
     expect(status()).toMatch(/couldn't be cloned/);
     expect(screen.getByRole("button", { name: /Try demo/ })).toBeTruthy();
+  });
+});
+
+describe("direction event, activity, clusters, highlights", () => {
+  const rich = (id, file, extra = {}) => ({ ...node(id, file), activity: "active", authorCount: 1, clusterId: null, ...extra });
+  const DIRECTION = {
+    staleFiles: ["src/old.js"],
+    activeClusters: [{ id: "http", label: "HTTP", files: ["src/a.js", "src/b.js"] }],
+  };
+
+  it("useSSE exposes a direction that arrives after done, and resets it on a new url", () => {
+    const ES = createMockEventSource();
+    const { result, rerender } = renderHook(({ url }) => useSSE(url, { EventSourceImpl: ES }), { initialProps: { url: "/a" } });
+    expect(result.current.direction).toBeNull();
+    const src = ES.instances[0];
+    act(() => src.emit("node", rich("n1", "src/a.js")));
+    act(() => src.emit("done", ISSUE));
+    act(() => src.emit("direction", DIRECTION));
+    expect(result.current.direction).toEqual(DIRECTION);
+    expect(result.current.status).toBe("done");
+
+    rerender({ url: "/b" });
+    expect(result.current.direction).toBeNull();
+  });
+
+  it("useSSE also accepts direction before done, and ignores malformed payloads", () => {
+    const ES = createMockEventSource();
+    const { result } = renderHook(() => useSSE("/a", { EventSourceImpl: ES }));
+    act(() => ES.instances[0].emit("direction", "not json {"));
+    expect(result.current.direction).toBeNull();
+    act(() => ES.instances[0].emit("direction", DIRECTION));
+    expect(result.current.direction).toEqual(DIRECTION);
+    expect(result.current.status).not.toBe("done");
+  });
+
+  it("useSSE closes the stream after a grace period if the server never ends it after done", () => {
+    vi.useFakeTimers();
+    const ES = createMockEventSource();
+    renderHook(() => useSSE("/a", { EventSourceImpl: ES }));
+    act(() => ES.instances[0].emit("done", ISSUE));
+    act(() => vi.advanceTimersByTime(DONE_GRACE_MS - 1));
+    expect(ES.instances[0].readyState).not.toBe(2);
+    act(() => vi.advanceTimersByTime(1));
+    expect(ES.instances[0].readyState).toBe(2);
+  });
+
+  it("renders stale nodes dimmed and active nodes with a glow, keeping the importance hue", () => {
+    const { container } = render(
+      <GraphCanvas
+        nodes={[
+          rich("n1", "a.js", { importance: "core", activity: "active" }),
+          rich("n2", "b.js", { importance: "core", activity: "stale" }),
+          node("n3", "c.js", [], "core"), // no activity field: plain rendering
+        ]}
+      />
+    );
+    const [active, stale, plain] = ["n1", "n2", "n3"].map((id) => container.querySelector(`[data-node-id="${id}"]`));
+    expect(active.className).toContain("activity-active");
+    expect(active.style.boxShadow).toContain("16px");
+    expect(stale.className).toContain("activity-stale");
+    expect(stale.style.boxShadow).not.toContain("16px");
+    // Same hue (core blue) for both; stale is the translucent variant.
+    expect(active.style.borderColor).toBe("rgb(94, 200, 248)");
+    expect(stale.style.borderColor).toMatch(/^rgba\(94, 200, 248, 0\.3/);
+    expect(plain.dataset.activity).toBeUndefined();
+  });
+
+  it("gives nodes sharing a clusterId the same tint + dot, and leaves singletons/null alone", () => {
+    const { container } = render(
+      <GraphCanvas
+        nodes={[
+          rich("n1", "a.js", { clusterId: "http" }),
+          rich("n2", "b.js", { clusterId: "http" }),
+          rich("n3", "c.js", { clusterId: "data" }),
+          rich("n4", "d.js", { clusterId: "data" }),
+          rich("n5", "e.js", { clusterId: "solo" }),
+          rich("n6", "f.js"),
+        ]}
+      />
+    );
+    const q = (id) => container.querySelector(`[data-node-id="${id}"]`);
+    expect(q("n1").style.backgroundImage).toBe(q("n2").style.backgroundImage);
+    expect(q("n1").style.backgroundImage).not.toBe(q("n3").style.backgroundImage);
+    expect(q("n3").style.backgroundImage).toBe(q("n4").style.backgroundImage);
+    expect(q("n1").querySelector(".node-cluster-dot")).toBeTruthy();
+    for (const id of ["n5", "n6"]) {
+      expect(q(id).style.backgroundImage).toBe("");
+      expect(q(id).querySelector(".node-cluster-dot")).toBeNull();
+    }
+    expect(screen.getByText("http")).toBeTruthy(); // key entry per cluster
+  });
+
+  it("caps rendering at 25 nodes and only draws edges between rendered ones", () => {
+    const ns = Array.from({ length: 30 }, (_, i) => rich(`n${i}`, `f${i}.js`, { imports: i === 0 ? ["f29.js"] : i === 1 ? ["f0.js"] : [] }));
+    const { container } = render(<GraphCanvas nodes={ns} />);
+    expect(MAX_NODES).toBe(25);
+    expect(container.querySelectorAll("[data-node-id]")).toHaveLength(25);
+    expect(container.querySelector('[data-node-id="n25"]')).toBeNull();
+    const edges = [...container.querySelectorAll("path[data-edge]")].map((p) => p.dataset.edge);
+    expect(edges).toEqual(["n1->n0"]); // n0 -> f29.js dropped: f29 isn't rendered
+    expect(screen.getByText("Showing the first 25 of 30 files.")).toBeTruthy();
+  });
+
+  it("buildHighlights merges flagged/stale/active with flagged winning, normalizing paths", () => {
+    const h = buildHighlights({ flagged: ["./x.js"], stale: ["x.js", "y.js", 42], active: ["y.js", "z.js"] });
+    expect(Object.fromEntries(h)).toEqual({ "x.js": "flagged", "y.js": "stale", "z.js": "active" });
+    expect(buildHighlights({ stale: "not-an-array" }).size).toBe(0);
+  });
+
+  it("ExploreView highlights flagged, stale and active-cluster files once done + direction arrive", async () => {
+    Element.prototype.scrollIntoView ||= () => {};
+    const ES = createMockEventSource();
+    render(<ExploreView repoUrl={null} demo onReset={() => {}} EventSourceImpl={ES} />);
+    const src = ES.instances.at(-1);
+    act(() => {
+      src.open();
+      src.emit("node", rich("n1", "src/a.js", { clusterId: "http" }));
+      src.emit("node", rich("n2", "src/b.js", { clusterId: "http" }));
+      src.emit("node", rich("n3", "src/old.js", { activity: "stale" }));
+      src.emit("node", rich("n4", "src/bug.js"));
+      src.emit("node", rich("n5", "src/plain.js"));
+    });
+    const hl = (id) => document.querySelector(`[data-node-id="${id}"]`).dataset.highlight;
+    expect(["n1", "n2", "n3", "n4", "n5"].map(hl)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+
+    act(() => src.emit("done", { issue: "bug", evidence: "e", files: ["src/bug.js"] }));
+    expect(hl("n4")).toBe("flagged");
+
+    act(() => src.emit("direction", DIRECTION));
+    expect(["n1", "n2", "n3", "n4", "n5"].map(hl)).toEqual(["active", "active", "stale", "flagged", undefined]);
+    expect(document.querySelector('[data-node-id="n3"]').className).toContain("highlight-stale");
+    expect(screen.getByText("Flagged issue")).toBeTruthy();
+    expect(screen.getByText("Active cluster")).toBeTruthy();
   });
 });
