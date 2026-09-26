@@ -3,8 +3,13 @@ import cors from "cors";
 import dotenv from "dotenv";
 import exploreRouter from "./routes/explore.js";
 import demoRouter from "./routes/demo.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-dotenv.config();
+// server/.env wins; the repo-root .env is a fallback. Resolved from this file
+// so it works regardless of the cwd the server is started from.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: [path.join(__dirname, ".env"), path.join(__dirname, "../.env")] });
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.warn(
