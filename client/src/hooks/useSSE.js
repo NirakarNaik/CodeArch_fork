@@ -32,7 +32,8 @@ function reducer(state, action) {
         i === -1
           ? [...state.nodes, node]
           : state.nodes.map((n, j) => (j === i ? { ...node, id: n.id } : n));
-      return { ...state, nodes, status: "streaming" };
+      // A late node after `done` (the stream stays open for `direction`) must not reopen the run.
+      return { ...state, nodes, status: state.status === "done" ? "done" : "streaming" };
     }
     case "done":
       return { ...state, issue: action.data, status: "done" };

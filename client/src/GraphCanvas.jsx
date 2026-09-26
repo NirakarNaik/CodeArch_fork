@@ -133,7 +133,11 @@ export function buildHighlights(groups) {
 // order of first appearance so colours don't shuffle as nodes stream in.
 export function clusterColors(nodes) {
   const counts = new Map();
-  for (const n of nodes) if (n.clusterId != null) counts.set(n.clusterId, (counts.get(n.clusterId) || 0) + 1);
+  for (const n of nodes) {
+    // null/undefined/"" all mean "not in a cluster"; any other value (including 0) is an id.
+    if (n.clusterId == null || n.clusterId === "") continue;
+    counts.set(n.clusterId, (counts.get(n.clusterId) || 0) + 1);
+  }
   const colors = new Map();
   for (const [id, count] of counts) {
     if (count >= 2) colors.set(id, CLUSTER_COLORS[colors.size % CLUSTER_COLORS.length]);

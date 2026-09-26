@@ -36,6 +36,8 @@
 }
 
 .graph-wrap .node-role {
+  /* Break unbroken strings (hashes, minified names) so the 2-line clamp can add its ellipsis. */
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
