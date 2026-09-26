@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, renderHook, act, screen, fireEvent, cleanup } from "@testing-library/react";
 import { useSSE } from "../hooks/useSSE.js";
-import GraphCanvas, { buildEdges } from "../GraphCanvas.jsx";
+import GraphCanvas, { buildEdges, layout, routeEdge } from "../GraphCanvas.jsx";
 import ExploreView, { DEMO_URL } from "../ExploreView.jsx";
 import { createMockEventSource, FAKE_EVENTS } from "../mocks/mockEventSource.js";
 
@@ -91,7 +91,7 @@ describe("useSSE", () => {
 });
 
 describe("GraphCanvas", () => {
-  const edgeIds = (container) => [...container.querySelectorAll("line[data-edge]")].map((l) => l.dataset.edge);
+  const edgeIds = (container) => [...container.querySelectorAll("path[data-edge]")].map((l) => l.dataset.edge);
 
   it("renders a labeled box per node, colored by importance", () => {
     const { container } = render(
@@ -129,6 +129,56 @@ describe("GraphCanvas", () => {
   it("ignores self-imports", () => {
     expect(buildEdges([node("n1", "a.js", ["a.js"])])).toEqual([]);
   });
+
+  it("keeps adjacent import lines straight but reroutes lines that would pass behind another box", () => {
+    // 1000px wide -> 4 columns. n0..n3 fill row 0, n4 sits under n0, n8 under n4.
+    const ns = Array.from({ length: 9 }, (_, i) => node(`n${i}`, `f${i}.js`));
+    const { positions } = layout(ns, 1000);
+    const others = (a, b) => ns.filter((n) => n.id !== a && n.id !== b).map((n) => positions.get(n.id));
+
+    expect(routeEdge(positions.get("n1"), positions.get("n0"), others("n1", "n0")).routed).toBe(false);
+    // Same row, skipping n1 and n2.
+    expect(routeEdge(positions.get("n3"), positions.get("n0"), others("n3", "n0")).routed).toBe(true);
+    // Same column, skipping n4.
+    const vertical = routeEdge(positions.get("n8"), positions.get("n0"), others("n8", "n0"));
+    expect(vertical.routed).toBe(true);
+  });
+
+  it("never draws an edge through a third box, for every pair in a 4x4 grid", () => {
+    const ns = Array.from({ length: 16 }, (_, i) => node(`n${i}`, `f${i}.js`));
+    const { positions } = layout(ns, 1000);
+    const inside = (p, box) => p.x > box.x && p.x < box.x + 200 && p.y > box.y && p.y < box.y + 72;
+    for (const a of ns) {
+      for (const b of ns) {
+        if (a === b) continue;
+        const others = ns.filter((n) => n !== a && n !== b).map((n) => positions.get(n.id));
+        for (const lane of [-10, 0, 10]) {
+          const { d } = routeEdge(positions.get(a.id), positions.get(b.id), others, lane);
+          const pts = [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => ({ x: +m[1], y: +m[2] }));
+          // Sample every segment (corner control points included) and require no sample inside another box.
+          for (let i = 1; i < pts.length; i++) {
+            for (let t = 0; t <= 1; t += 0.02) {
+              const p = { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+              const hit = others.find((box) => inside(p, box));
+              if (hit) throw new Error(`${a.id}->${b.id} (lane ${lane}) crosses box at ${hit.x},${hit.y}: ${d}`);
+            }
+          }
+        }
+      }
+    }
+  });
+});
+
+describe("useSSE live-backend quirks", () => {
+  it("merges a file re-emitted under a new random id instead of drawing a second box", () => {
+    const ES = createMockEventSource();
+    const { result } = renderHook(() => useSSE("/s", { EventSourceImpl: ES }));
+    const src = ES.instances[0];
+    act(() => src.emit("node", node("abc123", "src/a.js", [], "support")));
+    act(() => src.emit("node", node("zzz999", "./src/a.js", ["src/b.js"], "core")));
+    expect(result.current.nodes).toHaveLength(1);
+    expect(result.current.nodes[0]).toMatchObject({ id: "abc123", importance: "core", imports: ["src/b.js"] });
+  });
 });
 
 describe("ExploreView", () => {
@@ -155,7 +205,7 @@ describe("ExploreView", () => {
     expect(screen.getByText("src/index.js")).toBeTruthy();
 
     act(() => src.emit("done", ISSUE));
-    expect(screen.getByRole("status").textContent).toMatch(/Done/);
+    expect(screen.getByRole("status").textContent).toBe("Done — 1 file mapped");
   });
 
   it("Demo Mode toggle switches the stream between the real URL and /api/demo/replay", async () => {

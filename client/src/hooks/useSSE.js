@@ -11,9 +11,15 @@ function reducer(state, action) {
       return state.status === "connecting" ? { ...state, status: "streaming" } : state;
     case "node": {
       const node = action.data;
-      const i = state.nodes.findIndex((n) => n.id === node.id);
-      // Re-emitted node ids replace in place so the graph doesn't duplicate boxes.
-      const nodes = i === -1 ? [...state.nodes, node] : state.nodes.map((n, j) => (j === i ? node : n));
+      // The backend mints a fresh random id per emit_node, so Claude recording the same file
+      // twice arrives as a new id. Match on id or path, and replace in place (keeping the
+      // original id so the box keeps its slot and doesn't re-fade).
+      const key = normalizeFile(node.file);
+      const i = state.nodes.findIndex((n) => n.id === node.id || normalizeFile(n.file) === key);
+      const nodes =
+        i === -1
+          ? [...state.nodes, node]
+          : state.nodes.map((n, j) => (j === i ? { ...node, id: n.id } : n));
       return { ...state, nodes, status: "streaming" };
     }
     case "done":
@@ -25,6 +31,8 @@ function reducer(state, action) {
       return state;
   }
 }
+
+const normalizeFile = (p) => (p || "").replace(/^\.?\//, "");
 
 function parse(e) {
   try {

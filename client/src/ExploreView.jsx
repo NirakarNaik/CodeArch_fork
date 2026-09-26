@@ -61,11 +61,12 @@ export default function ExploreView({ repoUrl, onReset, EventSourceImpl = MockEv
   const { nodes, issue, status, errorMessage } = useSSE(streamUrl, { EventSourceImpl });
 
   const failed = startError || status === "error";
+  const mapped = `${nodes.length} file${nodes.length === 1 ? "" : "s"} mapped`;
   let label;
   if (startError) label = `${startError} Try Demo Mode.`;
   else if (status === "connecting") label = demoMode ? "Loading demo…" : "Cloning repo…";
-  else if (status === "streaming") label = `Exploring… ${nodes.length} file${nodes.length === 1 ? "" : "s"} mapped`;
-  else if (status === "done") label = `Done — ${nodes.length} files mapped`;
+  else if (status === "streaming") label = `Exploring… ${mapped}`;
+  else if (status === "done") label = `Done — ${mapped}`;
   else label = `${errorMessage || "Live exploration failed."}${demoMode ? "" : " Try Demo Mode."}`;
 
   return (

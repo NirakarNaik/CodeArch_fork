@@ -21,6 +21,86 @@ function edgePoint(from, to) {
   return { x: to.x + dx * s, y: to.y + dy * s };
 }
 
+// Does segment p->q pass through the box at `pos` (with a small margin)? Liang–Barsky clip.
+function segmentHitsBox(p, q, pos, pad = 6) {
+  const [x0, y0, x1, y1] = [pos.x - pad, pos.y - pad, pos.x + NODE_W + pad, pos.y + NODE_H + pad];
+  const dx = q.x - p.x;
+  const dy = q.y - p.y;
+  let t0 = 0;
+  let t1 = 1;
+  for (const [pk, qk] of [[-dx, p.x - x0], [dx, x1 - p.x], [-dy, p.y - y0], [dy, y1 - p.y]]) {
+    if (pk === 0) {
+      if (qk < 0) return false;
+    } else {
+      const r = qk / pk;
+      if (pk < 0) t0 = Math.max(t0, r);
+      else t1 = Math.min(t1, r);
+      if (t0 > t1) return false;
+    }
+  }
+  return true;
+}
+
+// Polyline -> SVG path with softly rounded corners.
+function roundedPath(points, r = 8) {
+  let d = `M${points[0].x},${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [p, c, n] = [points[i - 1], points[i], points[i + 1]];
+    const inLen = Math.hypot(c.x - p.x, c.y - p.y);
+    const outLen = Math.hypot(n.x - c.x, n.y - c.y);
+    const k = Math.min(r, inLen / 2, outLen / 2);
+    const a = { x: c.x - ((c.x - p.x) / (inLen || 1)) * k, y: c.y - ((c.y - p.y) / (inLen || 1)) * k };
+    const b = { x: c.x + ((n.x - c.x) / (outLen || 1)) * k, y: c.y + ((n.y - c.y) / (outLen || 1)) * k };
+    d += ` L${a.x},${a.y} Q${c.x},${c.y} ${b.x},${b.y}`;
+  }
+  const last = points[points.length - 1];
+  return `${d} L${last.x},${last.y}`;
+}
+
+// Straight line between the two boxes when nothing is in the way. Otherwise the line would
+// pass behind another box and look like part of a chain, so route it through the empty
+// gutters between rows/columns instead (they never contain boxes). `lane` nudges parallel
+// routed edges apart so they don't sit exactly on top of each other.
+export function routeEdge(a, b, others, lane = 0) {
+  const ca = { x: a.cx, y: a.cy };
+  const cb = { x: b.cx, y: b.cy };
+  if (!others.some((box) => segmentHitsBox(ca, cb, box))) {
+    const s = edgePoint(cb, ca);
+    const e = edgePoint(ca, cb);
+    return { d: `M${s.x},${s.y} L${e.x},${e.y}`, routed: false };
+  }
+
+  const rowGap = (box, side) => (side === "above" ? box.y - GAP_Y / 2 : box.y + NODE_H + GAP_Y / 2);
+  const sameRow = a.y === b.y;
+  // Horizontal gutter next to the source (toward the target), and next to the target (toward the source).
+  const srcSide = sameRow ? (a.y === 0 ? "below" : "above") : b.y < a.y ? "above" : "below";
+  const dstSide = sameRow ? srcSide : srcSide === "above" ? "below" : "above";
+  const yA = rowGap(a, srcSide);
+  const yB = rowGap(b, dstSide);
+  const exitA = { x: a.cx, y: srcSide === "above" ? a.y : a.y + NODE_H };
+  const enterB = { x: b.cx, y: dstSide === "above" ? b.y : b.y + NODE_H };
+
+  let points;
+  if (yA === yB) {
+    // Source and target border the same gutter: one horizontal run.
+    points = [exitA, { x: a.cx, y: yA + lane }, { x: b.cx, y: yB + lane }, enterB];
+  } else {
+    // Drop down/up a column gutter beside the target, on the side facing the source.
+    const leftOfB = b.x - GAP_X / 2;
+    const rightOfB = b.x + NODE_W + GAP_X / 2;
+    const xV = a.x < b.x ? leftOfB : a.x > b.x ? rightOfB : b.x === 0 ? rightOfB : leftOfB;
+    points = [
+      exitA,
+      { x: a.cx, y: yA + lane },
+      { x: xV + lane, y: yA + lane },
+      { x: xV + lane, y: yB + lane },
+      { x: b.cx, y: yB + lane },
+      enterB,
+    ];
+  }
+  return { d: roundedPath(points), routed: true };
+}
+
 function useContainerWidth(ref) {
   const [width, setWidth] = useState(1000);
   useEffect(() => {
@@ -78,27 +158,25 @@ export default function GraphCanvas({ nodes }) {
           </span>
         ))}
       </div>
-      <div ref={containerRef} className="graph-canvas" style={{ height }} data-testid="graph-canvas">
-        <svg className="graph-edges" width={Math.max(width, 0)} height={height} aria-hidden="true">
+      <div ref={containerRef} className="graph-canvas" style={{ height: height + GAP_Y / 2 }} data-testid="graph-canvas">
+        <svg className="graph-edges" width={Math.max(width, 0)} height={height + GAP_Y / 2} aria-hidden="true">
           <defs>
             <marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="#6b6e82" />
             </marker>
           </defs>
-          {edges.map(({ id, from, to }) => {
-            const a = positions.get(from.id);
-            const b = positions.get(to.id);
-            const start = edgePoint({ x: b.cx, y: b.cy }, { x: a.cx, y: a.cy });
-            const end = edgePoint({ x: a.cx, y: a.cy }, { x: b.cx, y: b.cy });
+          {edges.map(({ id, from, to }, i) => {
+            const others = nodes.filter((n) => n.id !== from.id && n.id !== to.id).map((n) => positions.get(n.id));
+            const lane = ((i % 5) - 2) * 5;
+            const { d, routed } = routeEdge(positions.get(from.id), positions.get(to.id), others, lane);
             return (
-              <line
+              <path
                 key={id}
                 data-edge={id}
+                data-routed={routed || undefined}
                 className="graph-edge"
-                x1={start.x}
-                y1={start.y}
-                x2={end.x}
-                y2={end.y}
+                d={d}
+                fill="none"
                 markerEnd="url(#graph-arrow)"
               />
             );
@@ -122,7 +200,7 @@ export default function GraphCanvas({ nodes }) {
               }}
               title={`${node.file}\n${node.role}${node.imports?.length ? `\nimports: ${node.imports.join(", ")}` : ""}`}
             >
-              <div className="node-file">{node.file}</div>
+              <div className="node-file">{normalize(node.file)}</div>
               <div className="node-role">{node.role}</div>
             </div>
           );
