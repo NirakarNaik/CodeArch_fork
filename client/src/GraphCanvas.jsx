@@ -236,7 +236,11 @@ export default function GraphCanvas({ nodes: allNodes, highlights = new Map() })
             node.role,
             node.imports?.length ? `imports: ${node.imports.join(", ")}` : null,
             node.activity ? `activity: ${node.activity}` : null,
-            node.authorCount != null ? `authors: ${node.authorCount}` : null,
+            node.authorCount === 0
+              ? "not touched in the analyzed commits"
+              : node.authorCount != null
+                ? `authors: ${node.authorCount}`
+                : null,
             node.clusterId != null ? `cluster: ${node.clusterId}` : null,
             highlight ? `highlighted: ${HIGHLIGHTS[highlight].label}` : null,
           ];

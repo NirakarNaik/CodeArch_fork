@@ -3,16 +3,16 @@
 // Used by tests (manual control) and by the browser when the page has ?mock.
 
 export const FAKE_EVENTS = [
-  { type: "node", delayMs: 300, data: { id: "n1", file: "src/index.js", role: "App entry point, sets up the server.", imports: [], importance: "core", activity: "active", authorCount: 4, clusterId: "http" } },
-  { type: "node", delayMs: 500, data: { id: "n2", file: "src/routes/api.js", role: "Defines the main API routes.", imports: ["src/index.js", "src/db.js"], importance: "core", activity: "active", authorCount: 3, clusterId: "http" } },
-  { type: "node", delayMs: 500, data: { id: "n3", file: "src/utils/helpers.js", role: "Shared utility functions used across routes.", imports: ["src/routes/api.js"], importance: "support", activity: "stale", authorCount: 1, clusterId: null } },
-  { type: "node", delayMs: 500, data: { id: "n4", file: "config/settings.json", role: "Environment configuration values.", imports: [], importance: "config", activity: "active", authorCount: 2, clusterId: "data" } },
+  { type: "node", delayMs: 300, data: { id: "n1", file: "src/index.js", role: "App entry point, sets up the server.", imports: [], importance: "core", activity: "active", authorCount: 4, clusterId: "src#1" } },
+  { type: "node", delayMs: 500, data: { id: "n2", file: "src/routes/api.js", role: "Defines the main API routes.", imports: ["src/index.js", "src/db.js"], importance: "core", activity: "active", authorCount: 3, clusterId: "src#1" } },
+  { type: "node", delayMs: 500, data: { id: "n3", file: "src/utils/helpers.js", role: "Shared utility functions used across routes.", imports: ["src/routes/api.js"], importance: "support", activity: "stale", authorCount: 0, clusterId: null } },
+  { type: "node", delayMs: 500, data: { id: "n4", file: "config/settings.json", role: "Environment configuration values.", imports: [], importance: "config", activity: "active", authorCount: 2, clusterId: "root#1" } },
   // Arrives after api.js, so api.js -> db.js only gets its line once this node renders.
-  { type: "node", delayMs: 600, data: { id: "n5", file: "src/db.js", role: "Database connection pool.", imports: ["config/settings.json"], importance: "support", activity: "active", authorCount: 2, clusterId: "data" } },
-  { type: "node", delayMs: 500, data: { id: "n6", file: "src/legacy/oldHandler.js", role: "An older request handler that nothing currently imports.", imports: [], importance: "support", activity: "stale", authorCount: 1, clusterId: null } },
+  { type: "node", delayMs: 600, data: { id: "n5", file: "src/db.js", role: "Database connection pool.", imports: ["config/settings.json"], importance: "support", activity: "active", authorCount: 2, clusterId: "root#1" } },
+  { type: "node", delayMs: 500, data: { id: "n6", file: "src/legacy/oldHandler.js", role: "An older request handler that nothing currently imports.", imports: [], importance: "support", activity: "stale", authorCount: 0, clusterId: null } },
   { type: "done", delayMs: 800, data: { issue: "src/legacy/oldHandler.js is never imported anywhere — likely dead code.", evidence: "No other file references oldHandler.js.", files: ["src/legacy/oldHandler.js"] } },
-  // Final event. ProjectDirection's exact shape is Member 1's call; the UI only needs these two fields.
-  { type: "direction", delayMs: 400, data: { staleFiles: ["src/utils/helpers.js", "src/legacy/oldHandler.js"], activeClusters: [{ id: "http", label: "HTTP layer", files: ["src/index.js", "src/routes/api.js"] }] } },
+  // Final event (after done), shaped like ProjectDirection in shared/types.ts.
+  { type: "direction", delayMs: 400, data: { direction: "Active work is concentrated in the HTTP entry points; legacy handlers are untouched.", staleFiles: ["src/utils/helpers.js", "src/legacy/oldHandler.js"], activeClusters: [{ files: ["src/index.js", "src/routes/api.js"], authorCount: 4 }] } },
 ];
 
 const CONNECTING = 0;

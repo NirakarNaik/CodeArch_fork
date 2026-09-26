@@ -41,8 +41,8 @@ export default function ExploreView({ repoUrl, demo = false, onReset, EventSourc
   const [startError, setStartError] = useState(null);
   // Bumped to force a fresh stream (replay / retry) even when the URL is the same.
   const [run, setRun] = useState(0);
-  // One clone per repo URL: StrictMode runs this effect twice on mount, and without the
-  // cache each run would POST /start and clone the repo again.
+  // Shares the in-flight /start request: StrictMode runs this effect twice on mount, and
+  // without this each run would POST /start and clone the repo again.
   const sessionRef = useRef({ repoUrl: null, promise: null });
 
   useEffect(() => {
@@ -59,9 +59,14 @@ export default function ExploreView({ repoUrl, demo = false, onReset, EventSourc
     }
 
     let cancelled = false;
-    sessionRef.current.promise
+    const pending = sessionRef.current.promise;
+    pending
       .then((data) => {
-        if (!cancelled) setStreamUrl(data.sseUrl);
+        if (cancelled) return;
+        // Sessions are single-use on the server (a second stream gets 409/404), so once this
+        // one is being streamed, going live again must start a fresh session.
+        if (sessionRef.current.promise === pending) sessionRef.current = { repoUrl: null, promise: null };
+        setStreamUrl(data.sseUrl);
       })
       .catch((err) => {
         sessionRef.current = { repoUrl: null, promise: null }; // allow a retry

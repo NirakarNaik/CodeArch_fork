@@ -3,7 +3,6 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, renderHook, act, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { useSSE } from "../hooks/useSSE.js";
 import GraphCanvas, { buildEdges, buildHighlights, layout, routeEdge, MAX_NODES } from "../GraphCanvas.jsx";
-import { DONE_GRACE_MS } from "../hooks/useSSE.js";
 import ExploreView, { DEMO_URL } from "../ExploreView.jsx";
 import { createMockEventSource, FAKE_EVENTS } from "../mocks/mockEventSource.js";
 
@@ -266,9 +265,11 @@ describe("ExploreView", () => {
 
 describe("direction event, activity, clusters, highlights", () => {
   const rich = (id, file, extra = {}) => ({ ...node(id, file), activity: "active", authorCount: 1, clusterId: null, ...extra });
+  // Shaped like ProjectDirection in shared/types.ts.
   const DIRECTION = {
+    direction: "Work is concentrated in src/a.js and src/b.js.",
     staleFiles: ["src/old.js"],
-    activeClusters: [{ id: "http", label: "HTTP", files: ["src/a.js", "src/b.js"] }],
+    activeClusters: [{ files: ["src/a.js", "src/b.js"], authorCount: 3 }],
   };
 
   it("useSSE exposes a direction that arrives after done, and resets it on a new url", () => {
@@ -286,24 +287,25 @@ describe("direction event, activity, clusters, highlights", () => {
     expect(result.current.direction).toBeNull();
   });
 
-  it("useSSE also accepts direction before done, and ignores malformed payloads", () => {
+  it("useSSE ignores a malformed direction payload but still closes on it", () => {
     const ES = createMockEventSource();
     const { result } = renderHook(() => useSSE("/a", { EventSourceImpl: ES }));
+    act(() => ES.instances[0].emit("done", ISSUE));
     act(() => ES.instances[0].emit("direction", "not json {"));
     expect(result.current.direction).toBeNull();
-    act(() => ES.instances[0].emit("direction", DIRECTION));
-    expect(result.current.direction).toEqual(DIRECTION);
-    expect(result.current.status).not.toBe("done");
+    expect(ES.instances[0].readyState).toBe(2);
+    expect(result.current.status).toBe("done");
   });
 
-  it("useSSE closes the stream after a grace period if the server never ends it after done", () => {
+  it("useSSE keeps the stream open after done however long direction takes, then closes on direction", () => {
     vi.useFakeTimers();
     const ES = createMockEventSource();
-    renderHook(() => useSSE("/a", { EventSourceImpl: ES }));
+    const { result } = renderHook(() => useSSE("/a", { EventSourceImpl: ES }));
     act(() => ES.instances[0].emit("done", ISSUE));
-    act(() => vi.advanceTimersByTime(DONE_GRACE_MS - 1));
+    act(() => vi.advanceTimersByTime(60_000)); // direction may need its own Claude call
     expect(ES.instances[0].readyState).not.toBe(2);
-    act(() => vi.advanceTimersByTime(1));
+    act(() => ES.instances[0].emit("direction", DIRECTION));
+    expect(result.current.direction).toEqual(DIRECTION);
     expect(ES.instances[0].readyState).toBe(2);
   });
 

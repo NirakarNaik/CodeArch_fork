@@ -15,7 +15,8 @@ export const n = (file, extra = {}) => ({
 });
 const node = (file, extra) => ({ type: "node", delayMs: 40, data: n(file, extra) });
 const done = (issue = null, files = [], evidence = "") => ({ type: "done", delayMs: 40, data: { issue, evidence, files } });
-const direction = (data) => ({ type: "direction", delayMs: 40, data });
+// ProjectDirection: { direction, staleFiles, activeClusters: { files, authorCount }[] }
+const direction = (data) => ({ type: "direction", delayMs: 40, data: { direction: "Mock project direction.", ...data } });
 const range = (k) => Array.from({ length: k }, (_, i) => i);
 
 export const SCENARIOS = {
@@ -28,7 +29,7 @@ export const SCENARIOS = {
     node("src/c.js", { imports: ["src/b.js"] }),
     node("src/d.js", { imports: ["src/c.js"], importance: "config" }),
     done("src/d.js is unused", ["src/d.js"]),
-    direction({ staleFiles: ["src/c.js"], activeClusters: [{ id: "k", files: ["src/a.js"] }] }),
+    direction({ staleFiles: ["src/c.js"], activeClusters: [{ authorCount: 3, files: ["src/a.js"] }] }),
   ],
 
   noIssueEmptyDirection: [
@@ -49,11 +50,11 @@ export const SCENARIOS = {
         imports: range(25).filter((j) => j !== i).map((j) => `src/m${j}.js`),
         importance: ["core", "support", "config"][i % 3],
         activity: i % 4 === 0 ? "stale" : "active",
-        clusterId: ["api", "db", "ui", null][i % 4],
+        clusterId: ["src/api#1", "src/db#1", "root#1", null][i % 4],
       })
     ),
     done("src/m0.js is a god file", ["src/m0.js"]),
-    direction({ staleFiles: ["src/m4.js", "src/m8.js"], activeClusters: [{ id: "api", files: ["src/m1.js", "src/m5.js"] }] }),
+    direction({ staleFiles: ["src/m4.js", "src/m8.js"], activeClusters: [{ authorCount: 3, files: ["src/m1.js", "src/m5.js"] }] }),
   ],
 
   // Imports point at files that only show up later (and one that never does).
@@ -76,7 +77,7 @@ export const SCENARIOS = {
   unknownHighlights: [
     ...range(30).map((i) => node(`src/u${i}.js`)),
     done("gone", ["src/nope.js", "src/u29.js"]),
-    direction({ staleFiles: ["src/u27.js", "does/not/exist.js"], activeClusters: [{ id: "c", files: ["src/u0.js", "src/u26.js"] }] }),
+    direction({ staleFiles: ["src/u27.js", "does/not/exist.js"], activeClusters: [{ authorCount: 3, files: ["src/u0.js", "src/u26.js"] }] }),
   ],
 
   // Cluster whose second member is cut off by the cap -> rendered member is a singleton.
@@ -98,11 +99,12 @@ export const SCENARIOS = {
     done("x", ["src/all.js"]),
     direction({
       staleFiles: ["src/all.js", "src/stale-and-active.js"],
-      activeClusters: [{ id: "a", files: ["src/all.js", "src/stale-and-active.js", "src/only-active.js"] }],
+      activeClusters: [{ authorCount: 3, files: ["src/all.js", "src/stale-and-active.js", "src/only-active.js"] }],
     }),
   ],
 
-  // Direction sent twice; the second should win.
+  // Direction sent twice: per the contract direction is the last event, so the client has
+  // closed the stream and the second one is ignored.
   directionTwice: [
     node("src/a.js"),
     node("src/b.js"),
@@ -139,15 +141,18 @@ export const SCENARIOS = {
     done('<b>bold?</b> issue', ["src/xss.js"]),
   ],
 
-  // Payloads that are malformed or the wrong type.
+  // Payloads that are malformed or the wrong type (in the real node -> done -> direction order).
   malformed: [
     { type: "node", delayMs: 40, raw: "{not json" },
     node("src/ok.js"),
-    { type: "direction", delayMs: 40, raw: "null" },
-    { type: "direction", delayMs: 40, raw: '"just a string"' },
     done(null, undefined),
     direction({ staleFiles: null, activeClusters: [null, { id: "x" }, { files: "src/ok.js" }, { files: [7, null, "src/ok.js"] }] }),
   ],
+  directionNull: [node("src/ok.js"), done(), { type: "direction", delayMs: 40, raw: "null" }],
+  directionString: [node("src/ok.js"), done(), { type: "direction", delayMs: 40, raw: '"just a string"' }],
+
+  // authorCount 0 = file not touched in the analyzed commit window.
+  untouched: [node("src/cold.js", { activity: "stale", authorCount: 0 }), node("src/hot.js", { authorCount: 7 }), done()],
 
   // Server reports an error mid-stream after some nodes.
   errorMidStream: [node("src/a.js"), node("src/b.js"), { type: "error", delayMs: 40, data: { message: "rate limited" } }],

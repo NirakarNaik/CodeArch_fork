@@ -109,9 +109,9 @@ describe("hard scenarios", () => {
     expect(highlightOf("src/m0.js")).toBe("flagged");
     expect(highlightOf("src/m4.js")).toBe("stale");
     expect(highlightOf("src/m1.js")).toBe("active");
-    expect(keyText()).toContain("api");
-    expect(keyText()).toContain("db");
-    expect(keyText()).toContain("ui");
+    expect(keyText()).toContain("src/api#1");
+    expect(keyText()).toContain("src/db#1");
+    expect(keyText()).toContain("root#1");
     expect(ms).toBeLessThan(5000);
   });
 
@@ -170,10 +170,11 @@ describe("hard scenarios", () => {
     expect(highlightOf("src/only-active.js")).toBe("active");
   });
 
-  it("a second direction event replaces the first", () => {
-    runScenario("directionTwice");
-    expect(highlightOf("src/a.js")).toBeUndefined();
-    expect(highlightOf("src/b.js")).toBe("stale");
+  it("direction closes the stream (contract), so a second direction event is ignored", () => {
+    const src = runScenario("directionTwice", { endStream: false });
+    expect(src.readyState).toBe(2);
+    expect(highlightOf("src/a.js")).toBe("stale");
+    expect(highlightOf("src/b.js")).toBeUndefined();
   });
 
   it("a late node after done renders but doesn't flip the status back to analyzing", () => {
@@ -248,6 +249,22 @@ describe("rare scenarios", () => {
     expect(nodesOnScreen()).toHaveLength(1);
     expect(panelStatus()).toMatch(/Analysis complete/);
     expect(highlightOf("src/ok.js")).toBe("active");
+  });
+
+  it("a null or string direction payload is ignored, still closes the stream, run stays complete", () => {
+    for (const name of ["directionNull", "directionString"]) {
+      const src = runScenario(name, { endStream: false });
+      expect(src.readyState).toBe(2);
+      expect(panelStatus()).toMatch(/Analysis complete/);
+      expect(document.querySelector("[data-highlight]")).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("authorCount 0 is explained in the tooltip as untouched in the commit window", () => {
+    runScenario("untouched");
+    expect(byFile("src/cold.js").title).toContain("not touched in the analyzed commits");
+    expect(byFile("src/hot.js").title).toContain("authors: 7");
   });
 
   it("server error mid-stream: error panel shown, already-mapped nodes kept on screen", () => {

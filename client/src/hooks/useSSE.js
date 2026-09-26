@@ -1,19 +1,17 @@
 import { useEffect, useReducer } from "react";
 
 /**
- * Event shapes (see shared/types.ts, owned by Member 1). GraphNode may also carry
- *   activity: "active" | "stale", authorCount: number, clusterId: string | null
- * and the stream may send a final `direction` event. ProjectDirection isn't pinned down in
- * shared/types.ts yet; the frontend only relies on these fields and treats the rest as optional:
- *   { staleFiles?: string[], activeClusters?: { id?: string, label?: string, files: string[] }[] }
+ * Event shapes: see shared/types.ts (owned by Member 1). Live stream order is
+ *   node* -> done -> direction, then the server closes the stream.
+ * GraphNode carries activity / authorCount / clusterId; ProjectDirection is
+ *   { direction: string, staleFiles: string[], activeClusters: { files: string[], authorCount: number }[] }
+ * Per the contract the client must not close on `done` (it would miss `direction`): it closes on
+ * `direction` or `error`. Streams without a direction event (demo replay, older backends) end
+ * when the server closes them, which arrives as an error event and is ignored once done.
  */
 
 // State shape mirrors AppState in shared/types.ts, narrowed to what the stream drives.
 const initialState = { nodes: [], issue: null, direction: null, status: "connecting", errorMessage: null };
-
-// `direction` may arrive after `done`, so the stream stays open after `done` until the server
-// ends it (which surfaces as an error event, ignored once done). This is only a backstop.
-export const DONE_GRACE_MS = 5000;
 
 function reducer(state, action) {
   switch (action.type) {
@@ -71,7 +69,6 @@ export function useSSE(url, { EventSourceImpl } = {}) {
 
     const ES = EventSourceImpl || window.EventSource;
     const source = new ES(url);
-    let graceTimer = null;
 
     source.addEventListener("open", () => dispatch({ type: "open" }));
 
@@ -82,12 +79,12 @@ export function useSSE(url, { EventSourceImpl } = {}) {
 
     source.addEventListener("done", (e) => {
       dispatch({ type: "done", data: parse(e) ?? { issue: null, evidence: "", files: [] } });
-      graceTimer = setTimeout(() => source.close(), DONE_GRACE_MS);
     });
 
     source.addEventListener("direction", (e) => {
       const data = parse(e);
       if (data && typeof data === "object") dispatch({ type: "direction", data });
+      source.close(); // last event of a live run
     });
 
     // Fires for both server-sent `event: error` (has data) and connection failures (no data).
@@ -98,10 +95,7 @@ export function useSSE(url, { EventSourceImpl } = {}) {
       source.close();
     });
 
-    return () => {
-      clearTimeout(graceTimer);
-      source.close();
-    };
+    return () => source.close();
   }, [url, EventSourceImpl]);
 
   return state;
