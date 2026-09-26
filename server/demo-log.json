@@ -1,0 +1,8 @@
+[
+  { "type": "node", "delayMs": 300, "data": { "id": "n1", "file": "src/index.js", "role": "App entry point, sets up the server.", "imports": [], "importance": "core" } },
+  { "type": "node", "delayMs": 600, "data": { "id": "n2", "file": "src/routes/api.js", "role": "Defines the main API routes.", "imports": ["src/index.js"], "importance": "core" } },
+  { "type": "node", "delayMs": 500, "data": { "id": "n3", "file": "src/utils/helpers.js", "role": "Shared utility functions used across routes.", "imports": ["src/routes/api.js"], "importance": "support" } },
+  { "type": "node", "delayMs": 700, "data": { "id": "n4", "file": "config/settings.json", "role": "Environment configuration values.", "imports": [], "importance": "config" } },
+  { "type": "node", "delayMs": 500, "data": { "id": "n5", "file": "src/legacy/oldHandler.js", "role": "An older request handler that nothing currently imports.", "imports": [], "importance": "support" } },
+  { "type": "done", "delayMs": 800, "data": { "issue": "src/legacy/oldHandler.js is never imported anywhere in the codebase — it appears to be dead code left over from a previous version.", "evidence": "No other file references oldHandler.js despite it implementing a full request handler.", "files": ["src/legacy/oldHandler.js"] } }
+]
