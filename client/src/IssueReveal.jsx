@@ -1,4 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import DirectionReveal from "./DirectionReveal.jsx";
+import { FilePath, Typed, plainText, prefersReducedMotion, typedCount } from "./revealText.jsx";
 
 const NO_ISSUE_TEXT = "No notable issue flagged this run.";
 
@@ -93,28 +95,6 @@ function buildTimeline(headline, blocks) {
   return { statusAt, headlineStart, headlineEnd, at, end: cursor };
 }
 
-const prefersReducedMotion = () =>
-  typeof window !== "undefined" &&
-  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-
-function typedCount(text, t, start, end) {
-  if (t <= start) return 0;
-  if (t >= end) return text.length;
-  return Math.round(((t - start) / (end - start)) * text.length);
-}
-
-// The untyped remainder stays in the DOM as `visibility: hidden`, so the card
-// is laid out at its final size from the first frame and never jumps.
-function Typed({ text, count, typing }) {
-  return (
-    <>
-      <span>{text.slice(0, count)}</span>
-      {typing && <span className="typed-caret" aria-hidden="true" />}
-      <span className="typed-rest">{text.slice(count)}</span>
-    </>
-  );
-}
-
 // `backtick` spans render as inline code.
 function Inline({ text }) {
   return text.split(/`([^`]+)`/).map((chunk, i) => (i % 2 ? <code key={i}>{chunk}</code> : chunk));
@@ -147,16 +127,6 @@ function Analogy({ text }) {
         );
       })}
     </div>
-  );
-}
-
-function FilePath({ path }) {
-  const cut = path.lastIndexOf("/") + 1;
-  return (
-    <>
-      {cut > 0 && <span className="issue-file-dir">{path.slice(0, cut)}</span>}
-      <span className="issue-file-name">{path.slice(cut)}</span>
-    </>
   );
 }
 
@@ -248,7 +218,7 @@ function CheckIcon() {
   );
 }
 
-export default function IssueReveal({ issue }) {
+export default function IssueReveal({ issue, direction = null }) {
   const flagged = typeof issue?.issue === "string" && issue.issue.trim() !== "";
   const headline = flagged ? issue.issue.trim() : NO_ISSUE_TEXT;
   const evidence = typeof issue?.evidence === "string" ? issue.evidence.trim() : "";
@@ -306,7 +276,8 @@ export default function IssueReveal({ issue }) {
 
   // The reveal lands below the graph; bring it into view once, on arrival.
   useEffect(() => {
-    rootRef.current?.scrollIntoView({
+    // Optional call: environments without scrollIntoView (e.g. jsdom) just skip it.
+    rootRef.current?.scrollIntoView?.({
       behavior: prefersReducedMotion() ? "auto" : "smooth",
       block: "nearest",
     });
@@ -341,7 +312,7 @@ export default function IssueReveal({ issue }) {
   const num = (key) => blocks.findIndex((b) => b.key === key) + 2;
 
   const variant = flagged ? "flagged" : "clear";
-  const fileLabel = files.length === 1 ? "1 file implicated" : `${files.length} files implicated`;
+  const fileLabel = files.length === 1 ? "1 piece involved" : `${files.length} pieces involved`;
   const notes = parts?.notes || {};
   const piecesLabel =
     files.length === 1
@@ -351,8 +322,11 @@ export default function IssueReveal({ issue }) {
   const filesSection = files.length > 0 && (
     <div className={stagedClass("files", "issue-where")}>
       <SectionLabel index={num("files")} reveal>
-        {parts ? piecesLabel : flagged ? "Affected files" : "Files referenced"}
+        {flagged ? piecesLabel : "Files referenced"}
       </SectionLabel>
+      {!parts && flagged && (
+        <p className="issue-section-help">The parts of the project where Claude saw this.</p>
+      )}
       <ul className="issue-files">
         {files.map((file, i) => (
           <li key={`${i}:${file}`} className="issue-file" style={{ "--i": i }}>
@@ -372,146 +346,154 @@ export default function IssueReveal({ issue }) {
   );
 
   return (
-    <section
-      ref={rootRef}
-      tabIndex={-1}
-      className="issue-reveal"
-      data-variant={variant}
-      data-layout={parts ? "explained" : "plain"}
-      data-done={done ? "true" : "false"}
-      aria-labelledby={titleId}
-      onClick={done ? undefined : () => skip()}
-    >
-      <p className="sr-only" role="status">
-        {done
-          ? flagged
-            ? `Investigation complete. We found a problem: ${headline}`
-            : `Investigation complete. ${NO_ISSUE_TEXT}`
-          : ""}
-      </p>
+    <>
+      <section
+        ref={rootRef}
+        tabIndex={-1}
+        className="issue-reveal"
+        data-variant={variant}
+        data-layout={parts ? "explained" : "plain"}
+        data-done={done ? "true" : "false"}
+        aria-labelledby={titleId}
+        onClick={done ? undefined : () => skip()}
+      >
+        <p className="sr-only" role="status">
+          {done
+            ? flagged
+              ? `Investigation complete. We found a problem: ${plainText(headline)}`
+              : `Investigation complete. ${NO_ISSUE_TEXT}`
+            : ""}
+        </p>
 
-      <header className="issue-head">
-        <span className="issue-kicker">
-          <span className="issue-kicker-dot" aria-hidden="true" />
-          Investigation complete
-        </span>
-        {done ? (
-          flagged &&
-          files.length > 0 && <span className="issue-head-meta">{fileLabel}</span>
-        ) : (
-          <button
-            type="button"
-            className="issue-skip"
-            onClick={(e) => {
-              e.stopPropagation();
-              skip(true);
-            }}
+        <header className="issue-head">
+          <span className="issue-kicker">
+            <span className="issue-kicker-dot" aria-hidden="true" />
+            Investigation complete
+          </span>
+          {done ? (
+            flagged &&
+            files.length > 0 && <span className="issue-head-meta">{fileLabel}</span>
+          ) : (
+            <button
+              type="button"
+              className="issue-skip"
+              onClick={(e) => {
+                e.stopPropagation();
+                skip(true);
+              }}
+            >
+              Show all
+            </button>
+          )}
+        </header>
+
+        <div className="issue-body" aria-hidden={done ? undefined : "true"}>
+          <div
+            className={
+              t >= timeline.statusAt ? "issue-status issue-staged is-in" : "issue-status issue-staged"
+            }
           >
-            Show all
-          </button>
-        )}
-      </header>
+            <span className="issue-status-icon">{flagged ? <WarningIcon /> : <CheckIcon />}</span>
+            <h2 className="issue-status-title" id={titleId}>
+              {flagged ? "We found a problem" : "No problem found"}
+            </h2>
+          </div>
 
-      <div className="issue-body" aria-hidden={done ? undefined : "true"}>
-        <div
-          className={
-            t >= timeline.statusAt ? "issue-status issue-staged is-in" : "issue-status issue-staged"
-          }
-        >
-          <span className="issue-status-icon">{flagged ? <WarningIcon /> : <CheckIcon />}</span>
-          <h2 className="issue-status-title" id={titleId}>
-            {flagged ? "We found a problem" : "No problem found"}
-          </h2>
-        </div>
+          <div className="issue-section issue-finding">
+            <SectionLabel index={1}>{flagged ? "What Claude found" : "Result"}</SectionLabel>
+            <p className="issue-headline">
+              <Typed text={headline} count={headlineCount} typing={typingHeadline} />
+            </p>
+          </div>
 
-        <div className="issue-section issue-finding">
-          <SectionLabel index={1}>{flagged ? "What Claude found" : "Result"}</SectionLabel>
-          <p className="issue-headline">
-            <Typed text={headline} count={headlineCount} typing={typingHeadline} />
-          </p>
-        </div>
+          {parts ? (
+            <>
+              {parts.analogy && (
+                <div className={stagedClass("analogy", "issue-analogy-section")}>
+                  <SectionLabel index={num("analogy")} reveal>
+                    Think of it like this
+                  </SectionLabel>
+                  <Analogy text={parts.analogy} />
+                </div>
+              )}
 
-        {parts ? (
-          <>
-            {parts.analogy && (
-              <div className={stagedClass("analogy", "issue-analogy-section")}>
-                <SectionLabel index={num("analogy")} reveal>
-                  Think of it like this
-                </SectionLabel>
-                <Analogy text={parts.analogy} />
-              </div>
-            )}
+              {(parts.what || parts.loop || parts.term) && (
+                <div className={stagedClass("what", "issue-what")}>
+                  <SectionLabel index={num("what")} reveal>
+                    What is happening in this project
+                  </SectionLabel>
+                  {parts.loop && <LoopDiagram steps={parts.loop} />}
+                  {parts.what && <Prose text={parts.what} className="issue-prose" />}
+                  {parts.term && (
+                    <p className="issue-term">
+                      <span className="issue-term-label">Technical name</span>
+                      <span className="issue-term-value">{parts.term}</span>
+                    </p>
+                  )}
+                </div>
+              )}
 
-            {(parts.what || parts.loop || parts.term) && (
-              <div className={stagedClass("what", "issue-what")}>
-                <SectionLabel index={num("what")} reveal>
-                  What is happening in this project
-                </SectionLabel>
-                {parts.loop && <LoopDiagram steps={parts.loop} />}
-                {parts.what && <Prose text={parts.what} className="issue-prose" />}
-                {parts.term && (
-                  <p className="issue-term">
-                    <span className="issue-term-label">Technical name</span>
-                    <span className="issue-term-value">{parts.term}</span>
+              {parts.why && (
+                <div className={stagedClass("why", "issue-why")}>
+                  <SectionLabel index={num("why")} reveal>
+                    Why should I care?
+                  </SectionLabel>
+                  <Prose text={parts.why} className="issue-prose" />
+                </div>
+              )}
+
+              {filesSection}
+
+              {(parts.fix || parts.techFix) && (
+                <div className={stagedClass("fix", "issue-fix")}>
+                  <SectionLabel index={num("fix")} reveal>
+                    Possible fix
+                  </SectionLabel>
+                  {parts.fix && <Prose text={parts.fix} className="issue-prose" />}
+                  {parts.techFix && (
+                    <p className="issue-term">
+                      <span className="issue-term-label">Technical fix</span>
+                      <span className="issue-term-value">
+                        <Inline text={parts.techFix} />
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {parts.tech && (
+                <div className={stagedClass("tech", "issue-tech")}>
+                  <SectionLabel index={num("tech")} reveal>
+                    For developers — technical evidence
+                  </SectionLabel>
+                  <Prose text={parts.tech} className="issue-tech-text" />
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {filesSection}
+
+              {evidence && (
+                <div className={stagedClass("evidence", "issue-evidence")}>
+                  <SectionLabel index={num("evidence")} reveal>
+                    {flagged ? "How Claude knows" : "Notes"}
+                  </SectionLabel>
+                  {flagged && (
+                    <p className="issue-section-help">
+                      What Claude saw in the code, detailed enough for a developer to check.
+                    </p>
+                  )}
+                  <p className="issue-evidence-text">
+                    <Typed {...typedProps("evidence", evidence)} />
                   </p>
-                )}
-              </div>
-            )}
-
-            {parts.why && (
-              <div className={stagedClass("why", "issue-why")}>
-                <SectionLabel index={num("why")} reveal>
-                  Why should I care?
-                </SectionLabel>
-                <Prose text={parts.why} className="issue-prose" />
-              </div>
-            )}
-
-            {filesSection}
-
-            {(parts.fix || parts.techFix) && (
-              <div className={stagedClass("fix", "issue-fix")}>
-                <SectionLabel index={num("fix")} reveal>
-                  Possible fix
-                </SectionLabel>
-                {parts.fix && <Prose text={parts.fix} className="issue-prose" />}
-                {parts.techFix && (
-                  <p className="issue-term">
-                    <span className="issue-term-label">Technical fix</span>
-                    <span className="issue-term-value">
-                      <Inline text={parts.techFix} />
-                    </span>
-                  </p>
-                )}
-              </div>
-            )}
-
-            {parts.tech && (
-              <div className={stagedClass("tech", "issue-tech")}>
-                <SectionLabel index={num("tech")} reveal>
-                  For developers — technical evidence
-                </SectionLabel>
-                <Prose text={parts.tech} className="issue-tech-text" />
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {filesSection}
-
-            {evidence && (
-              <div className={stagedClass("evidence", "issue-evidence")}>
-                <SectionLabel index={num("evidence")} reveal>
-                  {flagged ? "Evidence" : "Notes"}
-                </SectionLabel>
-                <p className="issue-evidence-text">
-                  <Typed {...typedProps("evidence", evidence)} />
-                </p>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </section>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+      <DirectionReveal direction={direction} />
+    </>
   );
 }
