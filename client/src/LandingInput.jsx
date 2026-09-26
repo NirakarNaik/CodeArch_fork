@@ -72,8 +72,8 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
   let error = "";
   if (showErrors && !normalized) {
     error = isEmpty
-      ? "Paste a GitHub repository URL to begin."
-      : "That doesn't look like a GitHub repository. Expected github.com/owner/repository.";
+      ? "Paste a link to a GitHub project to begin."
+      : "That doesn't look like a GitHub project link. It should look like github.com/owner/project.";
   }
 
   const handleSubmit = (e) => {
@@ -107,21 +107,18 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
           <span className="landing-title-line">Archaeologist</span>
         </h1>
 
-        <p className="landing-tagline">
-          Understand an unfamiliar codebase.
-          <br />
-          Live, from the inside out.
-        </p>
+        <p className="landing-tagline">Give it a project it has never seen before.</p>
 
         <p className="landing-copy">
-          Claude explores the repository the way a senior engineer would — finding the entry
-          points, following imports, mapping the architecture as it reads — then flags one real
-          issue you can verify yourself.
+          Claude explores the project piece by piece, figures out how everything fits together,
+          and looks for something that could go wrong — then shows you the evidence.
         </p>
+
+        <p className="landing-aside">Think of it as a detective for unfamiliar software.</p>
 
         <form className="landing-form" onSubmit={handleSubmit} noValidate>
           <label className="field-label" htmlFor={inputId}>
-            Repository URL
+            Link to a project on GitHub
           </label>
 
           <div className="repo-field" data-state={fieldState} aria-busy={loading || undefined}>
@@ -132,7 +129,7 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
               className="repo-field-input"
               type="url"
               inputMode="url"
-              placeholder="github.com/owner/repository"
+              placeholder="github.com/owner/project"
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
@@ -173,7 +170,7 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
           >
             {error || (
               <>
-                Public GitHub repositories <span aria-hidden="true">·</span> Live AI exploration
+                Any public project on GitHub <span aria-hidden="true">·</span> Claude reads it live
               </>
             )}
           </p>
@@ -189,7 +186,7 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
               <span className="demo-btn-text">
                 <span className="demo-btn-label">Try interactive demo</span>
                 <span className="demo-btn-note">
-                  Recorded exploration · no API key or repository needed
+                  Watch a recorded investigation of a small online store · no setup needed
                 </span>
               </span>
               <span className="demo-btn-arrow" aria-hidden="true">
@@ -201,16 +198,16 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
 
         <ol className="landing-steps" aria-label="How it works">
           <li>
-            <span className="landing-step-index">01</span> Clone
+            <span className="landing-step-index">01</span> Copy the project
           </li>
           <li>
-            <span className="landing-step-index">02</span> Explore
+            <span className="landing-step-index">02</span> Read each piece
           </li>
           <li>
-            <span className="landing-step-index">03</span> Map
+            <span className="landing-step-index">03</span> Connect the pieces
           </li>
           <li>
-            <span className="landing-step-index">04</span> Flag
+            <span className="landing-step-index">04</span> Find the problem
           </li>
         </ol>
       </div>

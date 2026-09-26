@@ -275,6 +275,7 @@ code {
 .landing-inner > :nth-child(5) { animation-delay: 230ms; }
 .landing-inner > :nth-child(6) { animation-delay: 290ms; }
 .landing-inner > :nth-child(7) { animation-delay: 350ms; }
+.landing-inner > :nth-child(8) { animation-delay: 400ms; }
 
 .landing-status {
   display: inline-flex;
@@ -343,6 +344,15 @@ code {
   line-height: 1.65;
   color: var(--text-3);
   text-wrap: pretty;
+}
+
+.landing-aside {
+  margin: var(--space-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 /* Repository input — the primary object on the page. */
@@ -746,6 +756,7 @@ code {
 }
 
 .explore-wordmark-dim {
+  margin-right: 0.3em;
   color: var(--text-4);
   font-weight: 500;
 }
@@ -952,8 +963,9 @@ code {
 
 .analysis-line {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.8rem;
+  min-height: 2.5em;
   margin: 0;
   font-size: clamp(1.2rem, 2.4vw, 1.7rem);
   font-weight: 550;
@@ -967,6 +979,7 @@ code {
   flex: none;
   width: 8px;
   height: 8px;
+  margin-top: 0.5em;
   border-radius: 50%;
   background: var(--ok);
   box-shadow: 0 0 10px rgba(79, 209, 165, 0.6);
@@ -984,6 +997,12 @@ code {
   border-radius: 50%;
   border: 1px solid var(--accent);
   animation: ping 1.8s var(--ease-out) infinite;
+}
+
+.analysis-line-text {
+  max-width: 44ch;
+  text-wrap: pretty;
+  animation: rise 0.45s var(--ease-out) both;
 }
 
 .analysis-detail {
@@ -1024,6 +1043,24 @@ code {
   display: grid;
   justify-items: end;
   gap: var(--space-4);
+}
+
+.analysis-metrics-title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.analysis-metrics-note {
+  max-width: 34ch;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: right;
+  color: var(--text-3);
 }
 
 .analysis-stats {
@@ -1087,6 +1124,28 @@ code {
 .legend-count {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* Plain-language caption above the graph */
+
+.graph-caption {
+  margin: 0 0 var(--space-4);
+}
+
+.graph-caption-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--text-1);
+}
+
+.graph-caption-text {
+  max-width: 72ch;
+  margin: var(--space-1) 0 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-3);
 }
 
 /* Placeholder shown before the first node arrives */
@@ -1182,7 +1241,6 @@ code {
   --tone-line: var(--warn-line);
 
   position: relative;
-  max-width: 880px;
   margin-top: var(--space-6);
   scroll-margin: 96px 0 var(--space-5);
   padding: clamp(1.25rem, 3vw, 2rem);
@@ -1313,7 +1371,8 @@ code {
   padding-top: var(--space-5);
 }
 
-.issue-staged {
+.issue-status.issue-staged,
+.issue-section.issue-staged > :not(.issue-label) {
   opacity: 0;
   transform: translateY(6px);
   transition:
@@ -1321,9 +1380,19 @@ code {
     transform 0.5s var(--ease-out);
 }
 
-.issue-staged.is-in {
+.issue-status.issue-staged.is-in,
+.issue-section.issue-staged.is-in > :not(.issue-label) {
   opacity: 1;
   transform: none;
+}
+
+.issue-section.issue-staged > .issue-label {
+  opacity: 0.35;
+  transition: opacity 0.3s ease;
+}
+
+.issue-section.issue-staged.is-in > .issue-label {
+  opacity: 1;
 }
 
 .issue-status {
@@ -1375,6 +1444,11 @@ code {
   background: var(--line);
 }
 
+.issue-label-index {
+  color: var(--tone);
+  font-weight: 600;
+}
+
 .issue-headline {
   margin: 0;
   max-width: 52ch;
@@ -1385,6 +1459,207 @@ code {
   color: var(--text-1);
   overflow-wrap: anywhere;
   text-wrap: pretty;
+}
+
+/* Plain-language sections (structured evidence) */
+
+.issue-prose {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.issue-prose + .issue-prose {
+  margin-top: var(--space-3);
+}
+
+.issue-prose code,
+.issue-tech-text code {
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-3);
+  font-size: 0.88em;
+  color: var(--text-1);
+}
+
+.issue-why .issue-prose {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--tone-line);
+}
+
+.issue-fix .issue-label-index {
+  color: var(--ok);
+}
+
+.issue-fix .issue-prose {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--ok-line);
+}
+
+/* Technical evidence stays available but visually secondary. */
+.issue-tech {
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--line);
+}
+
+.issue-tech .issue-label-index {
+  color: var(--text-3);
+}
+
+.issue-tech-text {
+  margin: 0;
+  max-width: 90ch;
+  font-size: 0.85rem;
+  line-height: 1.65;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.issue-tech-text + .issue-tech-text {
+  margin-top: var(--space-2);
+}
+
+/* Everyday analogy with short quotes */
+
+.issue-analogy .issue-prose + .issue-quote,
+.issue-quote + .issue-prose {
+  margin-top: var(--space-3);
+}
+
+.issue-quote {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.issue-quote-who {
+  flex: none;
+  width: 5.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.issue-quote-text {
+  font-size: 1.05rem;
+  color: var(--text-1);
+}
+
+/* Small "technical name" / "technical fix" callouts for developers */
+
+.issue-term {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+
+.issue-term-label {
+  flex: none;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.issue-term-value {
+  min-width: 0;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+
+.issue-term-value code {
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-3);
+  font-size: 0.88em;
+  color: var(--text-1);
+}
+
+/* A → B → A loop, drawn top to bottom */
+
+.issue-loop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.issue-loop-step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+.issue-loop-node {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  max-width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-0);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.issue-loop-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.issue-loop-file {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.issue-loop-node.is-repeat {
+  border-color: var(--tone-line);
+  background: var(--tone-soft);
+}
+
+.issue-loop-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0 0.3rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.issue-loop-arrow {
+  font-size: 0.9rem;
+  letter-spacing: 0;
+  color: var(--tone);
+}
+
+.issue-loop-back {
+  margin-top: 0.35rem;
+  padding-left: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--tone);
 }
 
 /* The caret has zero net width so typed text never reflows. */
@@ -1424,6 +1699,14 @@ code {
   border-top: 1px dashed var(--line);
 }
 
+.issue-file:hover {
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.issue-file:hover .issue-file-dir {
+  color: var(--text-2);
+}
+
 .issue-staged.is-in .issue-file {
   animation: file-in 0.35s var(--ease-out) both;
   animation-delay: calc(var(--i, 0) * 70ms);
@@ -1435,6 +1718,19 @@ code {
   color: var(--tone);
 }
 
+.issue-file-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.issue-file-note {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
 .issue-file-path {
   min-width: 0;
   font-size: inherit;
@@ -1444,6 +1740,7 @@ code {
 
 .issue-file-dir {
   color: var(--text-3);
+  transition: color 0.15s ease;
 }
 
 .issue-file-name {
@@ -1461,6 +1758,22 @@ code {
   color: var(--text-2);
   overflow-wrap: anywhere;
   text-wrap: pretty;
+}
+
+@media (min-width: 1100px) {
+  .issue-body {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    column-gap: var(--space-7);
+  }
+
+  .issue-status,
+  .issue-finding,
+  .issue-finding + .issue-evidence,
+  .issue-where:last-child,
+  .issue-fix,
+  .issue-tech {
+    grid-column: 1 / -1;
+  }
 }
 
 /* 7. Motion --------------------------------------------------------------- */
@@ -1614,6 +1927,10 @@ code {
   .analysis-metrics {
     justify-items: start;
   }
+
+  .analysis-metrics-note {
+    text-align: left;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1703,8 +2020,24 @@ code {
     width: 100%;
   }
 
+  .explore-actions {
+    gap: var(--space-1);
+  }
+
+  .explore-actions .btn {
+    height: 32px;
+    padding: 0 0.6rem;
+    font-size: 0.75rem;
+  }
+
   .explore-actions .btn-secondary {
     margin-left: auto;
+  }
+
+  .demo-badge {
+    height: 28px;
+    padding: 0 0.6rem;
+    letter-spacing: 0.1em;
   }
 
   .demo-badge-note {
