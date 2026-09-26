@@ -13,6 +13,14 @@ const ERROR_COPY = {
     title: "Investigation interrupted",
     body: "That link wasn't accepted. It should look like github.com/owner/project.",
   },
+  live_busy: {
+    title: "Live mode is busy",
+    body: "Someone else is running a live investigation right now, and this server runs one at a time. Try again in a minute, or watch the recorded demo.",
+  },
+  rate_limited: {
+    title: "Live run limit reached",
+    body: "This public server limits how many live investigations can run. The recorded demo shows a complete investigation instead.",
+  },
   clone_failed: {
     title: "Investigation interrupted",
     body: "We couldn't get a copy of that project. Check that the link is right and that the project is public.",

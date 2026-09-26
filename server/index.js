@@ -18,6 +18,9 @@ if (!liveAvailable) {
 }
 
 const app = express();
+// Behind Render (and a Vercel rewrite) the client IP arrives in
+// X-Forwarded-For; trust it so per-visitor run limits see real visitors.
+app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json());
 

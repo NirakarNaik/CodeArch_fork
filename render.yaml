@@ -1,0 +1,23 @@
+# Render Blueprint for the CodeArchaeologist backend (Express API).
+# The frontend is hosted on Vercel, which forwards /api/* here (see vercel.json).
+services:
+  - type: web
+    name: codearchaeologist-api
+    runtime: node
+    plan: free
+    buildCommand: npm install --prefix server
+    startCommand: node server/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Set the value in the Render dashboard; never commit it.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Live runs spend Anthropic credits: one at a time, a few per visitor.
+      - key: LIVE_MAX_CONCURRENT
+        value: "1"
+      - key: LIVE_RUNS_PER_IP_PER_HOUR
+        value: "3"
+      - key: LIVE_RUNS_PER_DAY
+        value: "40"

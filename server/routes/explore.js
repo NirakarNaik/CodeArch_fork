@@ -14,7 +14,44 @@ const sessions = new Map(); // sessionId -> { rootDir, running, timer }
 const GITHUB_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+?(\.git)?\/?$/;
 const CLONE_TIMEOUT_MS = 30_000;
 const MAX_REPO_FILES = 5000;
-const SESSION_TTL_MS = 10 * 60_000;
+// Unopened sessions hold a live-run slot, so don't let them linger.
+const SESSION_TTL_MS = 2 * 60_000;
+
+// Live-run limits for the public deployment (each run spends Anthropic
+// credits). Unset/0 = no limit, so local dev and rehearsals are unaffected;
+// render.yaml sets them for the hosted backend.
+const limitEnv = (name) => Math.max(0, Number(process.env[name]) || 0);
+const MAX_CONCURRENT = limitEnv("LIVE_MAX_CONCURRENT");
+const MAX_PER_IP_PER_HOUR = limitEnv("LIVE_RUNS_PER_IP_PER_HOUR");
+const MAX_PER_DAY = limitEnv("LIVE_RUNS_PER_DAY");
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
+
+let activeRuns = 0; // from an accepted /start until its session ends
+const runsByIp = new Map(); // ip -> start timestamps within the last hour
+let dayStartedAt = Date.now();
+let runsToday = 0;
+
+/** Returns an error code if this request may not start a live run, else null. */
+function checkLimits(ip) {
+  const now = Date.now();
+  if (now - dayStartedAt > DAY_MS) {
+    dayStartedAt = now;
+    runsToday = 0;
+  }
+  const recent = (runsByIp.get(ip) || []).filter((t) => now - t < HOUR_MS);
+  runsByIp.set(ip, recent);
+  if (MAX_CONCURRENT && activeRuns >= MAX_CONCURRENT) return "live_busy";
+  if (MAX_PER_IP_PER_HOUR && recent.length >= MAX_PER_IP_PER_HOUR) return "rate_limited";
+  if (MAX_PER_DAY && runsToday >= MAX_PER_DAY) return "rate_limited";
+  return null;
+}
+
+function recordRun(ip) {
+  activeRuns += 1;
+  runsToday += 1;
+  runsByIp.get(ip).push(Date.now());
+}
 
 function removeDir(dir) {
   fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }, () => {});
@@ -25,6 +62,7 @@ function endSession(sessionId) {
   if (!session) return;
   clearTimeout(session.timer);
   sessions.delete(sessionId);
+  activeRuns = Math.max(0, activeRuns - 1);
   removeDir(session.rootDir);
 }
 
@@ -57,20 +95,31 @@ function countFiles(dir, limit) {
 // throw becomes an unhandledRejection and kills the whole server. Any
 // unexpected error here answers with clone_failed instead.
 router.post("/start", async (req, res) => {
-  try {
-    await startSession(req, res);
-  } catch (err) {
-    console.error("Start failed unexpectedly:", err);
-    if (!res.headersSent) res.status(500).json({ error: "clone_failed" });
-  }
-});
-
-async function startSession(req, res) {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   if (!GITHUB_URL_RE.test(repoUrl)) {
     return res.status(400).json({ error: "invalid_url" });
   }
+  const limited = checkLimits(req.ip);
+  if (limited) {
+    return res.status(429).json({ error: limited });
+  }
 
+  // The slot is held until endSession; if startSession fails before creating
+  // a session, give it back here.
+  recordRun(req.ip);
+  let started = false;
+  try {
+    started = (await startSession(req, res, repoUrl)) === true;
+  } catch (err) {
+    console.error("Start failed unexpectedly:", err);
+    if (!res.headersSent) res.status(500).json({ error: "clone_failed" });
+  } finally {
+    if (!started) activeRuns = Math.max(0, activeRuns - 1);
+  }
+});
+
+/** Clones and prepares a session; returns true once a session exists. */
+async function startSession(req, res, repoUrl) {
   const commitDepth = clampCommitDepth(req.body?.commitDepth ?? DEFAULT_COMMIT_DEPTH);
   const sessionId = nanoid(10);
   const rootDir = path.join(os.tmpdir(), `codearch-${sessionId}`);
@@ -130,6 +179,7 @@ async function startSession(req, res) {
   const timer = setTimeout(() => endSession(sessionId), SESSION_TTL_MS);
   sessions.set(sessionId, { rootDir, running: false, timer, history });
   res.json({ sessionId, sseUrl: `/api/explore/stream/${sessionId}` });
+  return true;
 }
 
 router.get("/stream/:sessionId", async (req, res) => {
@@ -153,6 +203,9 @@ router.get("/stream/:sessionId", async (req, res) => {
     "X-Accel-Buffering": "no",
   });
   res.flushHeaders();
+  // Proxies (e.g. a Vercel rewrite, which times out after 120s without a first
+  // byte) must see body bytes right away, not only once Claude produces a node.
+  res.write(": connected\n\n");
 
   const controller = new AbortController();
   let closed = false;
