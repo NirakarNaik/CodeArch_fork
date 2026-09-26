@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import { render, renderHook, act, cleanup, within } from "@testing-library/react";
+import { render, renderHook, act, cleanup } from "@testing-library/react";
 import ExploreView from "../ExploreView.jsx";
 import { layout, routeEdge, MAX_NODES } from "../GraphCanvas.jsx";
 import { useSSE } from "../hooks/useSSE.js";
@@ -29,7 +29,8 @@ function runScenario(name, { endStream = true, upTo } = {}) {
 const nodesOnScreen = () => [...document.querySelectorAll("[data-node-id]")];
 const byFile = (file) => nodesOnScreen().find((el) => el.querySelector(".node-file").textContent === file);
 const edges = () => [...document.querySelectorAll("path[data-edge]")].map((p) => p.dataset.edge);
-const panelStatus = () => within(document.querySelector(".analysis-panel")).getByRole("status").textContent;
+// Assert on the view's phase, not Member 3's status wording (which changes with UI polish).
+const phase = () => document.querySelector(".explore-view").dataset.phase;
 const highlightOf = (file) => byFile(file)?.dataset.highlight;
 const keyText = () => document.querySelector(".graph-key")?.textContent ?? null;
 
@@ -53,7 +54,7 @@ describe("easy scenarios", () => {
     runScenario("single");
     expect(nodesOnScreen()).toHaveLength(1);
     expect(edges()).toEqual([]);
-    expect(panelStatus()).toMatch(/Analysis complete/);
+    expect(phase()).toBe("done");
     expect(document.querySelector("[data-highlight]")).toBeNull();
   });
 
@@ -70,7 +71,7 @@ describe("easy scenarios", () => {
 
   it("no issue + empty direction: completes cleanly with no highlights and no key", () => {
     runScenario("noIssueEmptyDirection");
-    expect(panelStatus()).toMatch(/Analysis complete/);
+    expect(phase()).toBe("done");
     expect(document.querySelector("[data-highlight]")).toBeNull();
     expect(keyText()).toBeNull();
   });
@@ -181,7 +182,7 @@ describe("hard scenarios", () => {
     runScenario("lateNodeAfterDone");
     expect(byFile("src/late.js")).toBeTruthy();
     expect(highlightOf("src/late.js")).toBe("stale");
-    expect(panelStatus()).toMatch(/Analysis complete/);
+    expect(phase()).toBe("done");
   });
 
   it("events from a previous stream are ignored after switching url", () => {
@@ -247,7 +248,7 @@ describe("rare scenarios", () => {
   it("malformed payloads are skipped and bad direction shapes don't crash", () => {
     runScenario("malformed");
     expect(nodesOnScreen()).toHaveLength(1);
-    expect(panelStatus()).toMatch(/Analysis complete/);
+    expect(phase()).toBe("done");
     expect(highlightOf("src/ok.js")).toBe("active");
   });
 
@@ -255,7 +256,7 @@ describe("rare scenarios", () => {
     for (const name of ["directionNull", "directionString"]) {
       const src = runScenario(name, { endStream: false });
       expect(src.readyState).toBe(2);
-      expect(panelStatus()).toMatch(/Analysis complete/);
+      expect(phase()).toBe("done");
       expect(document.querySelector("[data-highlight]")).toBeNull();
       cleanup();
     }
@@ -269,13 +270,13 @@ describe("rare scenarios", () => {
 
   it("server error mid-stream: error panel shown, already-mapped nodes kept on screen", () => {
     runScenario("errorMidStream");
-    expect(panelStatus()).toMatch(/interrupted/i);
+    expect(phase()).toBe("error");
     expect(nodesOnScreen()).toHaveLength(2);
   });
 
   it("stream ends without done: treated as interrupted, nodes kept", () => {
     runScenario("noDone");
-    expect(panelStatus()).toMatch(/interrupted/i);
+    expect(phase()).toBe("error");
     expect(nodesOnScreen()).toHaveLength(2);
   });
 });

@@ -187,7 +187,8 @@ describe("useSSE live-backend quirks", () => {
 });
 
 describe("ExploreView", () => {
-  const status = () => within(document.querySelector(".analysis-panel")).getByRole("status").textContent;
+  // Assert on the view's phase, not Member 3's status wording (which changes with UI polish).
+  const phase = () => document.querySelector(".explore-view").dataset.phase;
 
   beforeEach(() => {
     // IssueReveal scrolls itself into view; jsdom doesn't implement scrollIntoView.
@@ -201,7 +202,7 @@ describe("ExploreView", () => {
   it("goes cloning -> analyzing -> complete and renders nodes live from the real stream", async () => {
     const ES = createMockEventSource();
     render(<ExploreView repoUrl="https://github.com/o/r" onReset={() => {}} EventSourceImpl={ES} />);
-    expect(status()).toMatch(/Cloning repository/);
+    expect(phase()).toBe("starting");
 
     await act(async () => {});
     const src = ES.instances.at(-1);
@@ -209,11 +210,11 @@ describe("ExploreView", () => {
 
     act(() => src.open());
     act(() => src.emit("node", node("n1", "src/index.js")));
-    expect(status()).toMatch(/Analyzing repository/);
+    expect(phase()).toBe("streaming");
     expect(document.querySelector('[data-node-id="n1"]').textContent).toContain("src/index.js");
 
     act(() => src.emit("done", ISSUE));
-    expect(status()).toMatch(/Analysis complete/);
+    expect(phase()).toBe("done");
   });
 
   it("clones only once under StrictMode's double effect run", async () => {
@@ -258,7 +259,7 @@ describe("ExploreView", () => {
     fetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: "clone_failed" }) });
     render(<ExploreView repoUrl="https://github.com/o/r" onReset={() => {}} EventSourceImpl={createMockEventSource()} />);
     await act(async () => {});
-    expect(status()).toMatch(/couldn't be cloned/);
+    expect(phase()).toBe("error");
     expect(screen.getByRole("button", { name: /Try demo/ })).toBeTruthy();
   });
 });
