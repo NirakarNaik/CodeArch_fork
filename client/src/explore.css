@@ -1,0 +1,28 @@
+/* ExploreView-only styles. The auto-switch notice must stay prominent: it is the
+   project's honesty requirement for Demo Mode, not decoration. */
+
+.explore-view .auto-switch-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid #f0a500;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: rgba(240, 165, 0, 0.12);
+  color: var(--text-1, #e8e8ef);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.explore-view .auto-switch-title {
+  color: #f0a500;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}
+
+.explore-view .auto-switch-body {
+  color: var(--text-2, #c9cad3);
+}

@@ -1,0 +1,247 @@
+/* GraphCanvas: radial SVG dependency graph. Scoped under .graph-wrap: main.jsx loads styles.css
+   after this file, so these selectors need the extra specificity to win over its legacy
+   .graph-canvas / .graph-node rules. */
+
+.graph-wrap .graph-canvas {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 360px;
+  max-height: 78vh;
+  background: #0d0f14;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.graph-wrap .graph-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Edges: curved, faint by default; draw in once both endpoints exist (i.e. on mount). */
+.graph-wrap .edge {
+  fill: none;
+  stroke: #333;
+  stroke-width: 1;
+  opacity: 0.5;
+  stroke-dasharray: var(--len);
+  stroke-dashoffset: var(--len);
+  animation: graphEdgeDraw 0.4s ease-out forwards;
+  transition:
+    stroke 0.2s ease,
+    stroke-width 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.graph-wrap .edge.highlighted {
+  stroke: #f0a500;
+  stroke-width: 2;
+  opacity: 1;
+}
+
+@keyframes graphEdgeDraw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Nodes: fade + scale 0.7 -> 1 once on mount. Position lives on the outer <g transform>,
+   so the animated transforms sit on inner groups and never fight the layout. */
+.graph-wrap .gnode-body,
+.graph-wrap .gnode-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.graph-wrap .gnode-body {
+  animation: graphNodeIn 0.3s ease-out both;
+}
+
+@keyframes graphNodeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.graph-wrap .gnode-dot {
+  transition: r 0.3s ease;
+}
+
+.graph-wrap .gnode.importance-core .gnode-dot {
+  filter: drop-shadow(0 0 6px rgba(240, 165, 0, 0.5));
+}
+
+.graph-wrap .gnode.importance-config .gnode-dot {
+  opacity: 0.8;
+}
+
+.graph-wrap .gnode-label {
+  font-family: var(--font-mono, ui-monospace, "Cascadia Code", Consolas, monospace);
+  font-size: 10px;
+  fill: #b8bcc6;
+  /* Background-coloured halo keeps labels legible where edges pass underneath. */
+  paint-order: stroke;
+  stroke: #0d0f14;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  animation: graphLabelIn 0.3s ease-out both;
+}
+
+@keyframes graphLabelIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Activity (from commit history) layers on top of importance: stale files recede. Only the
+   dot and label dim, so highlight rings (incl. active-cluster) on a stale node stay visible. */
+.graph-wrap .gnode.activity-stale .gnode-dot,
+.graph-wrap .gnode.activity-stale .gnode-label {
+  opacity: 0.45;
+}
+
+.graph-wrap .gnode.activity-stale .gnode-dot {
+  filter: saturate(0.35);
+}
+
+/* Cluster membership: small dot on the node's shoulder. */
+.graph-wrap .node-cluster-dot {
+  stroke: #0d0f14;
+  stroke-width: 1.5;
+}
+
+/* Highlights (flagged issue / stale / active cluster): pulsing ring, colour via --hl. */
+.graph-wrap .gnode-ring {
+  fill: none;
+  stroke: var(--hl);
+  stroke-width: 2;
+  animation: graphRingPulse 1.6s ease-in-out infinite;
+}
+
+.graph-wrap .gnode.highlight-stale .gnode-ring {
+  stroke-dasharray: 3 3;
+}
+
+@keyframes graphRingPulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.15;
+  }
+}
+
+/* focusNode(): one 1.0 -> 1.15 -> 1.0 pulse per call (A/B names so repeats replay). */
+.graph-wrap .gnode-pulse.pulse-a {
+  animation: graphFocusPulseA 0.6s ease-in-out 1;
+}
+
+.graph-wrap .gnode-pulse.pulse-b {
+  animation: graphFocusPulseB 0.6s ease-in-out 1;
+}
+
+@keyframes graphFocusPulseA {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+@keyframes graphFocusPulseB {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+.graph-wrap .gnode.is-focused .gnode-label {
+  fill: #f0a500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-wrap .edge {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .graph-wrap .gnode-body,
+  .graph-wrap .gnode-label,
+  .graph-wrap .gnode-ring,
+  .graph-wrap .gnode-pulse.pulse-a,
+  .graph-wrap .gnode-pulse.pulse-b {
+    animation: none;
+  }
+}
+
+/* Key under the graph. */
+.graph-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-3, #9092a3);
+}
+
+.graph-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.graph-key-importance {
+  text-transform: capitalize;
+}
+
+.graph-key-tint {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.graph-key-ring {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  outline: 2px solid var(--hl);
+  outline-offset: -2px;
+}
+
+.graph-key-item.highlight-stale .graph-key-ring {
+  outline-style: dashed;
+}
+
+.graph-key-line {
+  width: 16px;
+  height: 2px;
+  background: #f0a500;
+}
+
+.graph-cap-note {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-3, #9092a3);
+}
+
+/* Active-cluster membership layered on a flagged/stale node: solid outer ring, not pulsing,
+   so it reads as a second, independent signal next to the main highlight ring. */
+.graph-wrap .gnode-ring-active {
+  fill: none;
+  stroke: var(--hl);
+  stroke-width: 1.5;
+  stroke-opacity: 0.9;
+}
