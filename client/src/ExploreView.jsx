@@ -78,7 +78,8 @@ export default function ExploreView({ repoUrl, demo = false, onReset, EventSourc
     };
   }, [demoMode, repoUrl, run]);
 
-  // `direction` (ProjectDirection) is also available here for Member 3's direction panel.
+  // `direction` (ProjectDirection) arrives after `done`; it's passed to IssueReveal for
+  // Member 3's direction panel and also feeds the graph highlights below.
   const { nodes, issue, direction, status } = useSSE(streamUrl, { EventSourceImpl });
 
   // Files to call out on the graph, all through the same highlight mechanism.
@@ -113,7 +114,7 @@ export default function ExploreView({ repoUrl, demo = false, onReset, EventSourc
         onReset={onReset}
       />
       {streaming && <GraphCanvas nodes={nodes} highlights={highlights} />}
-      {streaming && issue && <IssueReveal issue={issue} />}
+      {streaming && issue && <IssueReveal issue={issue} direction={direction} />}
     </div>
   );
 }
