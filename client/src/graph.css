@@ -1,0 +1,100 @@
+/* Scoped under .graph-wrap / .explore-view: main.jsx loads styles.css after this file,
+   so these selectors need the extra specificity to win over its grid rules. */
+
+.graph-wrap .graph-canvas {
+  position: relative;
+  display: block;
+  min-height: 120px;
+  transition: height 0.3s ease;
+}
+
+.graph-wrap .graph-edges {
+  position: absolute;
+  inset: 0 auto auto 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.graph-wrap .graph-edge {
+  stroke: #6b6e82;
+  stroke-width: 1.5;
+  animation: graphFadeIn 0.3s ease-in;
+}
+
+.graph-wrap .graph-node {
+  position: absolute;
+  overflow: hidden;
+  padding: 0.6rem 0.75rem 0.6rem 1rem;
+  animation: graphFadeIn 0.3s ease-in;
+  transition: left 0.3s ease, top 0.3s ease;
+}
+
+.graph-wrap .node-file {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-wrap .node-role {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  text-transform: capitalize;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+@keyframes graphFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Demo Mode toggle pinned to the top-right corner. */
+.explore-view .demo-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid #333;
+  cursor: pointer;
+  user-select: none;
+}
+
+.explore-view .demo-toggle.on {
+  border-color: #f5b942;
+  color: #f5b942;
+}
+
+.explore-view .status-label.error {
+  color: #f87171;
+}
+
+.explore-view .explore-header {
+  padding-right: 9rem; /* keep header content clear of the fixed toggle */
+}
