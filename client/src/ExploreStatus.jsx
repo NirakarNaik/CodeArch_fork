@@ -1,37 +1,38 @@
 // Header + analysis panel for the explore screen. Purely presentational: every
 // number shown is derived from the GraphNode events received so far.
 
+// Written for someone who has never programmed: "project", not "repository".
 const ERROR_COPY = {
   live_unavailable: {
     title: "Live mode unavailable",
-    body: "Live AI exploration isn't configured on this server — no Anthropic API key is set. The demo replays a full recorded exploration without one.",
+    body: "Live investigations need an Anthropic API key, and this server doesn't have one set up. The demo replays a complete recorded investigation instead.",
   },
   invalid_url: {
-    title: "Exploration interrupted",
-    body: "The server rejected that repository URL. Use the form github.com/owner/repository.",
+    title: "Investigation interrupted",
+    body: "That link wasn't accepted. It should look like github.com/owner/project.",
   },
   clone_failed: {
-    title: "Exploration interrupted",
-    body: "The repository couldn't be cloned. Check that it exists, is public, and that this machine can reach GitHub.",
+    title: "Investigation interrupted",
+    body: "We couldn't get a copy of that project. Check that the link is right and that the project is public.",
   },
   network: {
-    title: "Exploration interrupted",
-    body: "Couldn't reach the exploration server. Check that it is still running.",
+    title: "Investigation interrupted",
+    body: "We couldn't reach the Code Archaeologist server. Check that it is still running.",
   },
   stream: {
-    title: "Exploration interrupted",
-    body: "The exploration stream ended before the analysis finished. Whatever was mapped so far is shown below.",
+    title: "Investigation interrupted",
+    body: "The investigation stopped before it finished. Whatever Claude looked at so far is shown below.",
   },
   demo: {
     title: "Demo interrupted",
-    body: "The recorded demo couldn't be streamed from the server. Try it again.",
+    body: "The recorded demo couldn't be played. Try it again.",
   },
 };
 
 const IMPORTANCE = [
-  ["core", "Core"],
-  ["support", "Support"],
-  ["config", "Config"],
+  ["core", "Important parts"],
+  ["support", "Helper parts"],
+  ["config", "Settings"],
 ];
 
 function repoSlug(url) {
@@ -40,39 +41,48 @@ function repoSlug(url) {
 }
 
 function summarize(nodes) {
-  const files = new Set();
   const byImportance = { core: 0, support: 0, config: 0 };
-  let relationships = 0;
+  let connections = 0;
   for (const node of nodes) {
-    files.add(node.file);
-    for (const dep of node.imports || []) files.add(dep);
-    relationships += node.imports?.length || 0;
+    connections += node.imports?.length || 0;
     if (node.importance in byImportance) byImportance[node.importance] += 1;
   }
-  return { discovered: nodes.length, traced: files.size, relationships, byImportance };
+  return { explored: nodes.length, connections, byImportance };
 }
 
-function phaseCopy(phase, demo, slug, stats) {
+// While streaming, the headline narrates the latest discovery in the agent's
+// own plain-language words (GraphNode.role), so the run reads as a story.
+function phaseCopy(phase, demo, slug, stats, latest) {
   switch (phase) {
     case "starting":
-      return { kicker: "Preparing", line: "Cloning repository", detail: `Shallow clone of ${slug}` };
+      return {
+        kicker: "Preparing",
+        line: "Getting a copy of the project",
+        detail: `Downloading ${slug}`,
+        sr: "Getting a copy of the project",
+      };
     case "connecting":
       return {
-        kicker: "Connecting",
-        line: demo ? "Loading recorded session" : "Starting the agent",
-        detail: demo ? "Replaying a captured exploration" : "Handing the repository to Claude",
+        kicker: "Preparing",
+        line: demo ? "Replaying the investigation" : "Sending the project to Claude",
+        detail: demo
+          ? "A recording of an earlier run — no live AI calls"
+          : "Claude will read it one piece at a time",
+        sr: demo ? "Replaying the investigation" : "Sending the project to Claude",
       };
     case "done":
       return {
-        kicker: "Analysis complete",
-        line: "Architecture mapped",
-        detail: `${stats.discovered} files mapped · ${stats.relationships} relationships`,
+        kicker: "Investigation complete",
+        line: "Claude worked out how the project fits together",
+        detail: `${stats.explored} pieces examined · ${stats.connections} links between them`,
+        sr: "Investigation complete",
       };
     default:
       return {
-        kicker: "Analyzing repository",
-        line: stats.discovered ? "Mapping repository architecture" : "Surveying repository structure",
-        detail: null,
+        kicker: "Figuring out how the project is put together",
+        line: latest ? latest.role || "Reading the next piece" : "Opening the project…",
+        detail: latest ? latest.file : null,
+        sr: "Figuring out how the project is put together",
       };
   }
 }
@@ -88,10 +98,10 @@ export default function ExploreStatus({
 }) {
   const slug = demo ? "sample/storefront-api" : repoSlug(repoUrl);
   const stats = summarize(nodes);
-  const latest = nodes.length ? nodes[nodes.length - 1].file : null;
+  const latest = nodes.length ? nodes[nodes.length - 1] : null;
   const failed = phase === "error";
   const error = failed ? ERROR_COPY[errorCode] || ERROR_COPY[demo ? "demo" : "stream"] : null;
-  const copy = phaseCopy(phase, demo, slug, stats);
+  const copy = phaseCopy(phase, demo, slug, stats, latest);
   const active = phase === "starting" || phase === "connecting" || phase === "streaming";
 
   return (
@@ -128,7 +138,7 @@ export default function ExploreStatus({
             </button>
           )}
           <button type="button" className="btn btn-secondary" onClick={onReset}>
-            Explore another repo
+            Explore another project
           </button>
         </div>
       </header>
@@ -136,11 +146,11 @@ export default function ExploreStatus({
       <section
         className="analysis-panel"
         data-phase={phase}
-        aria-label="Exploration status"
+        aria-label="Investigation status"
         aria-busy={active || undefined}
       >
         <p className="sr-only" role="status">
-          {failed ? `${error.title}. ${error.body}` : `${copy.kicker}. ${copy.line}.`}
+          {failed ? `${error.title}. ${error.body}` : `${copy.sr}.`}
         </p>
 
         {failed ? (
@@ -156,7 +166,7 @@ export default function ExploreStatus({
                 {demo ? "Retry demo" : "Try demo"}
               </button>
               <button type="button" className="btn btn-secondary" onClick={onReset}>
-                Explore another repo
+                Explore another project
               </button>
             </div>
           </div>
@@ -165,37 +175,38 @@ export default function ExploreStatus({
             <p className="analysis-kicker">{copy.kicker}</p>
             <p className="analysis-line">
               <span className={active ? "analysis-pulse is-active" : "analysis-pulse"} />
-              {copy.line}
+              <span key={copy.line} className="analysis-line-text">
+                {copy.line}
+              </span>
             </p>
             <p className="analysis-detail">
-              {copy.detail ||
-                (latest ? (
-                  <>
-                    <span className="analysis-detail-prompt">›</span> traced{" "}
-                    <code>{latest}</code>
-                  </>
-                ) : (
-                  "Reading the repository root"
-                ))}
+              {phase === "streaming" && latest ? (
+                <>
+                  <span className="analysis-detail-prompt">›</span> Now looking at{" "}
+                  <code>{copy.detail}</code>
+                </>
+              ) : (
+                copy.detail || "Looking at how the project is organised"
+              )}
             </p>
           </div>
         )}
 
         <div className="analysis-metrics">
+          <p className="analysis-metrics-title">What Claude figured out</p>
           <dl className="analysis-stats">
             <div className="analysis-stat">
-              <dt>Nodes discovered</dt>
-              <dd>{stats.discovered}</dd>
+              <dt>Pieces examined</dt>
+              <dd>{stats.explored}</dd>
             </div>
             <div className="analysis-stat">
-              <dt>Files traced</dt>
-              <dd>{stats.traced}</dd>
-            </div>
-            <div className="analysis-stat">
-              <dt>Relationships</dt>
-              <dd>{stats.relationships}</dd>
+              <dt>Links between them</dt>
+              <dd>{stats.connections}</dd>
             </div>
           </dl>
+          <p className="analysis-metrics-note">
+            A link means one part of the project needs another part to do its job.
+          </p>
           <p className="analysis-legend">
             {IMPORTANCE.map(([key, label]) => (
               <span key={key} className="legend-item" data-importance={key}>
@@ -207,6 +218,16 @@ export default function ExploreStatus({
           </p>
         </div>
       </section>
+
+      {!failed && nodes.length > 0 && (
+        <div className="graph-caption">
+          <h2 className="graph-caption-title">How the project works</h2>
+          <p className="graph-caption-text">
+            Each box is one part of the project: its real file name, then what it does in plain
+            English. The coloured edge shows how central that part is.
+          </p>
+        </div>
+      )}
 
       {active && nodes.length === 0 && (
         <div className="graph-placeholder" aria-hidden="true">
