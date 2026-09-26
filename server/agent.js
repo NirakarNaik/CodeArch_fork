@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import path from "node:path";
 import { listDir, readFile, TOOL_SCHEMAS } from "./tools.js";
 import { normalizeRelPath } from "./sandbox.js";
+import { computeClusters, unknownAnnotation, STALE_THRESHOLD_DAYS } from "./clustering.js";
 
 const MODEL = "claude-opus-5-5";
 
@@ -31,6 +32,24 @@ a circular dependency, an unused/orphaned file, a god-file with excessive import
 naming inconsistency, or similar. Be concrete: name the exact file(s). If you genuinely
 found nothing notable, say so honestly rather than inventing one.
 Return ONLY strict JSON, no other text: {"issue": string|null, "evidence": string, "files": [string]}`;
+
+const DIRECTION_PROMPT = (summary) => `Based on the repo structure you explored and this commit activity data:
+${summary}
+Describe in 1-2 sentences the direction this project appears to be heading,
+based on where recent commits are concentrated. List any files that appear
+stale/abandoned relative to the rest. List any clusters of files being touched
+by multiple distinct authors (collaboration hotspots). Be concrete — name
+actual files. If the commit history is too sparse to say anything meaningful,
+say so honestly.
+Return ONLY strict JSON, no other text: {"direction": string, "staleFiles": [string],
+"activeClusters": [{"files": [string], "authorCount": number}]}`;
+
+const NO_DIRECTION = {
+  direction: "Not enough commit history to determine direction",
+  staleFiles: [],
+  activeClusters: [],
+};
+const MAX_SUMMARY_FILES = 100;
 
 const MAX_NODES = 25;
 const MAX_MS = 90_000;
@@ -70,12 +89,88 @@ function parseIssue(text) {
   };
 }
 
+// Everything Claude sees here was computed in code (gitHistory.js /
+// clustering.js). Claude only narrates; it is told not to invent groupings.
+function buildCommitSummary(commitStats, analysis, meta) {
+  const lines = [
+    `Commits analyzed: ${meta.commitsAnalyzed ?? "unknown"}, distinct authors: ${meta.authorCount ?? "unknown"}, stale threshold: ${STALE_THRESHOLD_DAYS} days.`,
+    `file | touchCount | distinctAuthors | lastTouchedDaysAgo`,
+    ...commitStats
+      .slice(0, MAX_SUMMARY_FILES)
+      .map((s) => `${s.file} | ${s.touchCount} | ${s.distinctAuthors} | ${s.lastTouchedDaysAgo}`),
+  ];
+  if (commitStats.length > MAX_SUMMARY_FILES) {
+    lines.push(`(${commitStats.length - MAX_SUMMARY_FILES} less-touched files omitted)`);
+  }
+  lines.push(
+    `Stale files (computed from git history): ${meta.staleCandidates.length ? meta.staleCandidates.join(", ") : "none"}`,
+    `Collaboration clusters (computed from git history: same directory + shared authors): ${
+      analysis.clusters.length
+        ? analysis.clusters.map((c) => `[${c.files.join(", ")}] (${c.authorCount} authors)`).join("; ")
+        : "none"
+    }`,
+    `Pick staleFiles and activeClusters only from the computed lists above (you may leave out ones that aren't meaningful). Do not invent new groupings or change the counts.`
+  );
+  return lines.join("\n");
+}
+
+/** Parses Claude's direction JSON, keeping only files/counts that match the computed data. */
+function parseDirection(text, staleCandidates, analysis) {
+  const cleaned = text.replace(/```(?:json)?/gi, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end <= start) return NO_DIRECTION;
+  const obj = JSON.parse(cleaned.slice(start, end + 1));
+
+  const staleSet = new Set(staleCandidates);
+
+  let staleFiles = (Array.isArray(obj.staleFiles) ? obj.staleFiles : [])
+    .map(normalizeRelPath)
+    .filter((f, i, arr) => staleSet.has(f) && arr.indexOf(f) === i);
+
+  // Groupings and counts always come from computeClusters. Claude only picks
+  // which computed clusters are worth showing (any cluster it names a file from).
+  const mentioned = new Set(
+    (Array.isArray(obj.activeClusters) ? obj.activeClusters : []).flatMap((c) =>
+      (Array.isArray(c?.files) ? c.files : []).map(normalizeRelPath)
+    )
+  );
+  let activeClusters = analysis.clusters
+    .filter((c) => c.files.some((f) => mentioned.has(f)))
+    .map((c) => ({ files: c.files, authorCount: c.authorCount }));
+
+  // If Claude left a list empty but the computed data has entries, show the computed data.
+  if (!staleFiles.length) staleFiles = staleCandidates.slice(0, 10);
+  if (!activeClusters.length) {
+    activeClusters = analysis.clusters.map((c) => ({ files: c.files, authorCount: c.authorCount }));
+  }
+
+  const direction = typeof obj.direction === "string" && obj.direction.trim() ? obj.direction.trim() : NO_DIRECTION.direction;
+  return { direction, staleFiles, activeClusters };
+}
+
 /**
  * Runs the Opus exploration loop over a sandboxed repo checkout. Calls
  * onEvent({type:"node", data}) per discovery, then onEvent({type:"done", data})
- * exactly once. Pass options.signal to stop early (e.g. client disconnected).
+ * exactly once, then onEvent({type:"direction", data}) exactly once.
+ *
+ * commitStats comes from gitHistory.getCommitStats (null if history couldn't
+ * be read). options.analysis is computeClusters(commitStats) if the caller
+ * already has it; options.commitsAnalyzed / authorCount feed the summary.
+ * Pass options.signal to stop early (e.g. client disconnected).
  */
-export async function runExploreLoop(rootDir, onEvent, { signal } = {}) {
+export async function runExploreLoop(
+  rootDir,
+  onEvent,
+  commitStats = null,
+  { signal, analysis, commitsAnalyzed, authorCount } = {}
+) {
+  // activity / authorCount / clusterId are merged into node events in code;
+  // Claude never supplies them.
+  const hasHistory = Array.isArray(commitStats) && commitStats.length > 0;
+  if (hasHistory && !analysis) analysis = computeClusters(commitStats);
+  const annotate = hasHistory ? analysis.annotate : unknownAnnotation;
+
   const seenPaths = new Set();
   const emitted = new Set();
   let reads = 0;
@@ -156,7 +251,14 @@ export async function runExploreLoop(rootDir, onEvent, { signal } = {}) {
           // Stable id derived from the path keeps events idempotent across reconnects.
           onEvent({
             type: "node",
-            data: { id: `n:${file}`, file, role: use.input.role.trim(), imports, importance: use.input.importance },
+            data: {
+              id: `n:${file}`,
+              file,
+              role: use.input.role.trim(),
+              imports,
+              importance: use.input.importance,
+              ...annotate(file),
+            },
           });
           result("recorded");
         } else {
@@ -184,6 +286,7 @@ export async function runExploreLoop(rootDir, onEvent, { signal } = {}) {
   }
 
   let issue = NO_ISSUE;
+  let issueReply = "";
   try {
     const finalResponse = await getClient().messages.create(
       {
@@ -197,10 +300,51 @@ export async function runExploreLoop(rootDir, onEvent, { signal } = {}) {
       { signal, timeout: FINAL_CALL_MS, maxRetries: 0 }
     );
     const text = finalResponse.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    issueReply = text;
     issue = parseIssue(text);
   } catch (err) {
     if (signal?.aborted) return;
     console.error("Flagged-issue call failed:", err.message);
   }
   onEvent({ type: "done", data: issue });
+
+  // --- Direction call: one more turn in the same conversation, after "done". ---
+  if (!hasHistory) {
+    onEvent({ type: "direction", data: NO_DIRECTION });
+    return;
+  }
+
+  // Stale candidates: files stale within the window, plus explored files the
+  // window never touched at all.
+  const staleCandidates = [
+    ...new Set([...analysis.staleFiles, ...[...emitted].filter((f) => annotate(f).activity === "stale")]),
+  ];
+  messages.push({ role: "assistant", content: issueReply.trim() || JSON.stringify(issue) });
+  messages.push({
+    role: "user",
+    content: DIRECTION_PROMPT(
+      buildCommitSummary(commitStats, analysis, { commitsAnalyzed, authorCount, staleCandidates })
+    ),
+  });
+
+  let direction = NO_DIRECTION;
+  try {
+    const directionResponse = await getClient().messages.create(
+      {
+        model: MODEL,
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        tools: TOOL_SCHEMAS,
+        tool_choice: { type: "none" },
+        messages,
+      },
+      { signal, timeout: FINAL_CALL_MS, maxRetries: 0 }
+    );
+    const text = directionResponse.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    direction = parseDirection(text, staleCandidates, analysis);
+  } catch (err) {
+    if (signal?.aborted) return;
+    console.error("Direction call failed:", err.message);
+  }
+  onEvent({ type: "direction", data: direction });
 }

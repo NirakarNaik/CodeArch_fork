@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { runExploreLoop } from "../agent.js";
+import { getCommitStats, clampCommitDepth, DEFAULT_COMMIT_DEPTH } from "../gitHistory.js";
+import { computeClusters } from "../clustering.js";
 
 const router = Router();
 const sessions = new Map(); // sessionId -> { rootDir, running, timer }
@@ -57,13 +59,23 @@ router.post("/start", async (req, res) => {
     return res.status(400).json({ error: "invalid_url" });
   }
 
+  const commitDepth = clampCommitDepth(req.body?.commitDepth ?? DEFAULT_COMMIT_DEPTH);
   const sessionId = nanoid(10);
   const rootDir = path.join(os.tmpdir(), `codearch-${sessionId}`);
 
   try {
-    await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } })
+    // Clone depth choice: clone commitDepth + 1 commits in one go rather than a
+    // depth-1 clone plus a second `git fetch --deepen` (one network round trip,
+    // one failure point). The +1 matters: in a shallow clone the oldest commit
+    // has no parent, so `git log --name-only` would list every file in the repo
+    // as touched by it. With one extra commit of history, all commitDepth
+    // commits we analyze have their real parent. Repos with fewer commits just
+    // clone whole.
+    // A large global http.postBuffer (e.g. 500MB) makes git malloc that much
+    // up front and fail under memory pressure; override it for our clones.
+    await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS }, config: ["http.postBuffer=10485760"] })
       .env(cloneEnv())
-      .clone(repoUrl, rootDir, ["--depth", "1", "--single-branch", "--no-tags"]);
+      .clone(repoUrl, rootDir, ["--depth", String(commitDepth + 1), "--single-branch", "--no-tags"]);
   } catch (err) {
     console.error("Clone failed:", err.message);
     removeDir(rootDir);
@@ -75,9 +87,25 @@ router.post("/start", async (req, res) => {
     return res.status(413).json({ error: "repo_too_large" });
   }
 
+  // Commit history is computed once here, before the explore loop. A failure
+  // is not fatal: exploration still runs, and the stream sends the
+  // sparse-history fallback "direction" event instead of calling Claude.
+  let history = null;
+  try {
+    const { commitStats, commitsAnalyzed, authorCount } = await getCommitStats(rootDir, commitDepth);
+    if (commitsAnalyzed === 0) throw new Error("no commits found");
+    history = { commitStats, commitsAnalyzed, authorCount, analysis: computeClusters(commitStats) };
+    console.log(
+      `[${sessionId}] history: ${commitsAnalyzed}/${commitDepth} commits, ${authorCount} authors, ` +
+        `${commitStats.length} files, ${history.analysis.clusters.length} clusters`
+    );
+  } catch (err) {
+    console.error(`[${sessionId}] Commit history unavailable, skipping direction analysis:`, err.message);
+  }
+
   // Sessions whose stream is never opened are cleaned up after a while.
   const timer = setTimeout(() => endSession(sessionId), SESSION_TTL_MS);
-  sessions.set(sessionId, { rootDir, running: false, timer });
+  sessions.set(sessionId, { rootDir, running: false, timer, history });
   res.json({ sessionId, sseUrl: `/api/explore/stream/${sessionId}` });
 });
 
@@ -117,7 +145,13 @@ router.get("/stream/:sessionId", async (req, res) => {
   const heartbeat = setInterval(() => !closed && res.write(": ping\n\n"), 15_000);
 
   try {
-    await runExploreLoop(session.rootDir, send, { signal: controller.signal });
+    const h = session.history;
+    await runExploreLoop(session.rootDir, send, h?.commitStats ?? null, {
+      signal: controller.signal,
+      analysis: h?.analysis,
+      commitsAnalyzed: h?.commitsAnalyzed,
+      authorCount: h?.authorCount,
+    });
   } catch (err) {
     console.error("Explore loop failed:", err.message);
     send({ type: "error", data: { message: "Exploration failed: " + err.message } });
