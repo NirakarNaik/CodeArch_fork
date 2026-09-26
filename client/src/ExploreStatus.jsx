@@ -1,6 +1,8 @@
 // Header + analysis panel for the explore screen. Purely presentational: every
 // number shown is derived from the GraphNode events received so far.
 
+import { useEffect, useState } from "react";
+
 // Written for someone who has never programmed: "project", not "repository".
 const ERROR_COPY = {
   live_unavailable: {
@@ -35,6 +37,41 @@ const IMPORTANCE = [
   ["config", "Settings"],
 ];
 
+// A run can take a while before its first discovery (the recorded demo waits
+// ~18s). Until a piece arrives, cycle through general, honest activity — never
+// a claim about a specific file or a result — then settle on the last line.
+const WAITING_LINES = [
+  "Claude is reading the project structure…",
+  "Looking through the project's files…",
+  "Figuring out how the project is put together…",
+  "Following the project's connections…",
+  "Still investigating…",
+];
+const WAITING_STEP_S = 4;
+
+// Seconds since `running` last became true (or `resetKey` changed); 0 otherwise.
+function useElapsedSeconds(running, resetKey) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!running) return undefined;
+    setSeconds(0);
+    const startedAt = Date.now();
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [running, resetKey]);
+  return running ? seconds : 0;
+}
+
+const formatElapsed = (s) =>
+  s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+
+// The project recorded in server/demo-log.json (Member 1's capture). Keep in sync.
+const DEMO_REPO = "expressjs/session";
+
+// Narration sentences come straight from the agent and can run long; step the
+// type size down so the panel doesn't grow to four lines.
+const LONG_LINE = 90;
+
 function repoSlug(url) {
   if (!url) return "";
   return url.replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/\/$/, "");
@@ -52,7 +89,7 @@ function summarize(nodes) {
 
 // While streaming, the headline narrates the latest discovery in the agent's
 // own plain-language words (GraphNode.role), so the run reads as a story.
-function phaseCopy(phase, demo, slug, stats, latest) {
+function phaseCopy(phase, demo, slug, stats, latest, waitedS) {
   switch (phase) {
     case "starting":
       return {
@@ -74,16 +111,26 @@ function phaseCopy(phase, demo, slug, stats, latest) {
       return {
         kicker: "Investigation complete",
         line: "Claude worked out how the project fits together",
-        detail: `${stats.explored} pieces examined · ${stats.connections} links between them`,
+        detail: "What it found is below ↓",
         sr: "Investigation complete",
       };
-    default:
+    default: {
+      if (latest) {
+        return {
+          kicker: "Figuring out how the project is put together",
+          line: latest.role || "Reading the next piece",
+          detail: latest.file,
+          sr: "Figuring out how the project is put together",
+        };
+      }
+      const step = Math.min(Math.floor(waitedS / WAITING_STEP_S), WAITING_LINES.length - 1);
       return {
-        kicker: "Figuring out how the project is put together",
-        line: latest ? latest.role || "Reading the next piece" : "Opening the project…",
-        detail: latest ? latest.file : null,
-        sr: "Figuring out how the project is put together",
+        kicker: "Investigating",
+        line: WAITING_LINES[step],
+        detail: `${formatElapsed(waitedS)} so far · the first pieces appear here as Claude finds them`,
+        sr: "Investigating the project",
       };
+    }
   }
 }
 
@@ -96,13 +143,21 @@ export default function ExploreStatus({
   onTryDemo,
   onReset,
 }) {
-  const slug = demo ? "sample/storefront-api" : repoSlug(repoUrl);
+  const slug = demo ? DEMO_REPO : repoSlug(repoUrl);
   const stats = summarize(nodes);
   const latest = nodes.length ? nodes[nodes.length - 1] : null;
   const failed = phase === "error";
   const error = failed ? ERROR_COPY[errorCode] || ERROR_COPY[demo ? "demo" : "stream"] : null;
-  const copy = phaseCopy(phase, demo, slug, stats, latest);
   const active = phase === "starting" || phase === "connecting" || phase === "streaming";
+  // Streaming but nothing discovered yet: show that the investigation is alive.
+  const waiting = phase === "streaming" && nodes.length === 0;
+  const waitedS = useElapsedSeconds(waiting, demo);
+  const copy = phaseCopy(phase, demo, slug, stats, latest, waitedS);
+  // Numbers only mean something once a piece has arrived (or the run finished):
+  // no "0 pieces / 0 links" beside an error or during the opening wait.
+  const showMetrics = nodes.length > 0 || phase === "done";
+  // The graph area is on screen from the moment a stream exists; label it then.
+  const showCaption = nodes.length > 0 || phase === "connecting" || phase === "streaming";
 
   return (
     <>
@@ -175,7 +230,12 @@ export default function ExploreStatus({
             <p className="analysis-kicker">{copy.kicker}</p>
             <p className="analysis-line">
               <span className={active ? "analysis-pulse is-active" : "analysis-pulse"} />
-              <span key={copy.line} className="analysis-line-text">
+              <span
+                key={copy.line}
+                className={
+                  copy.line.length > LONG_LINE ? "analysis-line-text is-long" : "analysis-line-text"
+                }
+              >
                 {copy.line}
               </span>
             </p>
@@ -192,50 +252,48 @@ export default function ExploreStatus({
           </div>
         )}
 
-        <div className="analysis-metrics">
-          <p className="analysis-metrics-title">What Claude figured out</p>
-          <dl className="analysis-stats">
-            <div className="analysis-stat">
-              <dt>Pieces examined</dt>
-              <dd>{stats.explored}</dd>
-            </div>
-            <div className="analysis-stat">
-              <dt>Links between them</dt>
-              <dd>{stats.connections}</dd>
-            </div>
-          </dl>
-          <p className="analysis-metrics-note">
-            A link means one part of the project needs another part to do its job.
-          </p>
-          <p className="analysis-legend">
-            {IMPORTANCE.map(([key, label]) => (
-              <span key={key} className="legend-item" data-importance={key}>
-                <span className="legend-swatch" aria-hidden="true" />
-                {label}
-                <span className="legend-count">{stats.byImportance[key]}</span>
-              </span>
-            ))}
-          </p>
-        </div>
+        {showMetrics && (
+          <div className="analysis-metrics">
+            <p className="analysis-metrics-title">What Claude figured out</p>
+            <dl className="analysis-stats">
+              <div className="analysis-stat">
+                <dt>Pieces examined</dt>
+                <dd>{stats.explored}</dd>
+              </div>
+              <div className="analysis-stat">
+                <dt>Links between them</dt>
+                <dd>{stats.connections}</dd>
+              </div>
+            </dl>
+            <p className="analysis-metrics-note">
+              A link means one part of the project needs another part to do its job.
+            </p>
+            <p className="analysis-legend">
+              {IMPORTANCE.map(([key, label]) => (
+                <span key={key} className="legend-item" data-importance={key}>
+                  <span className="legend-swatch" aria-hidden="true" />
+                  {label}
+                  <span className="legend-term">{key}</span>
+                  <span className="legend-count">{stats.byImportance[key]}</span>
+                </span>
+              ))}
+            </p>
+          </div>
+        )}
       </section>
 
-      {!failed && nodes.length > 0 && (
+      {showCaption && (
         <div className="graph-caption">
           <h2 className="graph-caption-title">How the project works</h2>
           <p className="graph-caption-text">
-            Each box is one part of the project: its real file name, then what it does in plain
-            English. The coloured edge shows how central that part is.
+            Each dot is one part of the project, labelled with its real file name. Bigger dots are
+            more central parts; hover over a dot to read what it does. A line with an arrow points
+            from a part to another part it needs. When Claude finishes, rings mark what it found —
+            the key under the graph explains each colour.
           </p>
         </div>
       )}
 
-      {active && nodes.length === 0 && (
-        <div className="graph-placeholder" aria-hidden="true">
-          {Array.from({ length: 8 }, (_, i) => (
-            <span key={i} className="graph-placeholder-cell" style={{ "--i": i }} />
-          ))}
-        </div>
-      )}
     </>
   );
 }

@@ -15,6 +15,19 @@ function normalizeRepoUrl(input) {
   return `https://github.com/${owner}/${repo}`;
 }
 
+// How many recent commits the server reads for the project-direction analysis
+// (StartExploreRequest.commitDepth, clamped server-side to the same range).
+const DEPTH_MIN = 10;
+const DEPTH_MAX = 50;
+const DEPTH_DEFAULT = 25;
+
+function parseDepth(raw) {
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  return n >= DEPTH_MIN && n <= DEPTH_MAX ? n : null;
+}
+
 function GitHubMark() {
   return (
     <svg className="repo-field-icon" viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
@@ -59,12 +72,27 @@ function ArchitectureTrace() {
 // `loading` is optional: App currently swaps views synchronously on submit, but
 // if a parent ever awaits something before navigating it can pass it through.
 // `onDemo` is optional; the demo entry point only renders when it is provided.
+// `onSubmit(url, commitDepth)` — callers that only take the URL can ignore the
+// second argument.
 export default function LandingInput({ onSubmit, onDemo, loading = false }) {
   const [value, setValue] = useState("");
   const [showErrors, setShowErrors] = useState(false);
+  const [depthValue, setDepthValue] = useState(String(DEPTH_DEFAULT));
+  const [showDepthError, setShowDepthError] = useState(false);
   const inputRef = useRef(null);
+  const depthRef = useRef(null);
   const inputId = useId();
   const hintId = useId();
+  const depthId = useId();
+  const depthHintId = useId();
+
+  const depth = parseDepth(depthValue);
+  const depthError =
+    showDepthError && depth === null ? `Pick a whole number from ${DEPTH_MIN} to ${DEPTH_MAX}.` : "";
+  const depthHelp =
+    depth === null
+      ? `Choose how many recent changes (commits) Claude looks at: ${DEPTH_MIN}–${DEPTH_MAX}.`
+      : `Claude looks at the project's last ${depth} changes (commits) to see where recent work is happening.`;
 
   const normalized = normalizeRepoUrl(value);
   const isEmpty = value.trim() === "";
@@ -84,7 +112,12 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
       inputRef.current?.focus();
       return;
     }
-    onSubmit(normalized);
+    if (depth === null) {
+      setShowDepthError(true);
+      depthRef.current?.focus();
+      return;
+    }
+    onSubmit(normalized, depth);
   };
 
   const fieldState = error ? "invalid" : normalized ? "valid" : "idle";
@@ -149,7 +182,7 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
             <button
               type="submit"
               className="explore-btn"
-              aria-disabled={normalized && !loading ? "false" : "true"}
+              aria-disabled={normalized && depth !== null && !loading ? "false" : "true"}
               data-loading={loading ? "true" : undefined}
             >
               <span className="explore-btn-label">{loading ? "Starting" : "Explore"}</span>
@@ -174,6 +207,40 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
               </>
             )}
           </p>
+
+          <div className="depth-row">
+            <div className="depth-field" data-state={depthError ? "invalid" : "idle"}>
+              <label className="depth-label" htmlFor={depthId}>
+                How far back should Claude look?
+              </label>
+              <input
+                ref={depthRef}
+                id={depthId}
+                className="depth-input"
+                type="number"
+                inputMode="numeric"
+                min={DEPTH_MIN}
+                max={DEPTH_MAX}
+                step={1}
+                value={depthValue}
+                onChange={(e) => {
+                  setDepthValue(e.target.value);
+                  setShowDepthError(false);
+                }}
+                onBlur={() => setShowDepthError(true)}
+                aria-invalid={depthError ? "true" : "false"}
+                aria-describedby={depthHintId}
+              />
+              <span className="depth-unit">recent changes</span>
+            </div>
+            <p
+              id={depthHintId}
+              className={depthError ? "depth-hint error-text" : "depth-hint"}
+              aria-live="polite"
+            >
+              {depthError || depthHelp}
+            </p>
+          </div>
         </form>
 
         {onDemo && (
@@ -186,7 +253,8 @@ export default function LandingInput({ onSubmit, onDemo, loading = false }) {
               <span className="demo-btn-text">
                 <span className="demo-btn-label">Try interactive demo</span>
                 <span className="demo-btn-note">
-                  Watch a recorded investigation of a small online store · no setup needed
+                  Watch Claude investigate a real open-source project (expressjs/session) · no
+                  setup needed
                 </span>
               </span>
               <span className="demo-btn-arrow" aria-hidden="true">
