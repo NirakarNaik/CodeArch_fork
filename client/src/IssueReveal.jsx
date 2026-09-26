@@ -122,6 +122,14 @@ export default function IssueReveal({ issue }) {
     return () => cancelAnimationFrame(frameRef.current);
   }, [timeline]);
 
+  // The reveal lands below the graph; bring it into view once, on arrival.
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "nearest",
+    });
+  }, []);
+
   const done = t >= timeline.end;
 
   const skip = (moveFocus = false) => {

@@ -58,7 +58,8 @@ function ArchitectureTrace() {
 
 // `loading` is optional: App currently swaps views synchronously on submit, but
 // if a parent ever awaits something before navigating it can pass it through.
-export default function LandingInput({ onSubmit, loading = false }) {
+// `onDemo` is optional; the demo entry point only renders when it is provided.
+export default function LandingInput({ onSubmit, onDemo, loading = false }) {
   const [value, setValue] = useState("");
   const [showErrors, setShowErrors] = useState(false);
   const inputRef = useRef(null);
@@ -177,6 +178,26 @@ export default function LandingInput({ onSubmit, loading = false }) {
             )}
           </p>
         </form>
+
+        {onDemo && (
+          <div className="landing-demo">
+            <p className="landing-divider" aria-hidden="true">
+              <span>or</span>
+            </p>
+            <button type="button" className="demo-btn" onClick={onDemo} disabled={loading}>
+              <span className="demo-btn-play" aria-hidden="true" />
+              <span className="demo-btn-text">
+                <span className="demo-btn-label">Try interactive demo</span>
+                <span className="demo-btn-note">
+                  Recorded exploration · no API key or repository needed
+                </span>
+              </span>
+              <span className="demo-btn-arrow" aria-hidden="true">
+                →
+              </span>
+            </button>
+          </div>
+        )}
 
         <ol className="landing-steps" aria-label="How it works">
           <li>
