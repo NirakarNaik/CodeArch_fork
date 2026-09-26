@@ -4,13 +4,19 @@ import ExploreView from "./ExploreView.jsx";
 
 export default function App() {
   const [repoUrl, setRepoUrl] = useState(null);
+  const [demo, setDemo] = useState(false);
+
+  const reset = () => {
+    setRepoUrl(null);
+    setDemo(false);
+  };
 
   return (
     <div className="app">
-      {!repoUrl ? (
-        <LandingInput onSubmit={setRepoUrl} />
+      {!repoUrl && !demo ? (
+        <LandingInput onSubmit={setRepoUrl} onDemo={() => setDemo(true)} />
       ) : (
-        <ExploreView repoUrl={repoUrl} onReset={() => setRepoUrl(null)} />
+        <ExploreView repoUrl={repoUrl} demo={demo} onReset={reset} />
       )}
     </div>
   );

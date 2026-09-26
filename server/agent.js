@@ -58,8 +58,8 @@ const FINAL_CALL_MS = 45_000;
 const IMPORTANCE = new Set(["core", "support", "config"]);
 const NO_ISSUE = { issue: null, evidence: "No issue flagged this run.", files: [] };
 
-// Created lazily: ES imports run before dotenv.config() in index.js, so reading
-// the key at module load would always see undefined.
+// Created lazily so the key is read at first use, not at import time; env.js
+// (imported first by index.js) is the single place .env files are loaded.
 let client;
 function getClient() {
   if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1 });
