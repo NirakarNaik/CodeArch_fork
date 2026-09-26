@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import { render, renderHook, act, cleanup } from "@testing-library/react";
 import ExploreView from "../ExploreView.jsx";
-import { layout, routeEdge, MAX_NODES } from "../GraphCanvas.jsx";
+import { MAX_NODES } from "../GraphCanvas.jsx";
 import { useSSE } from "../hooks/useSSE.js";
 import { createMockEventSource } from "../mocks/mockEventSource.js";
 import { SCENARIOS, playInto, n } from "../mocks/scenarios.js";
@@ -27,26 +27,25 @@ function runScenario(name, { endStream = true, upTo } = {}) {
 }
 
 const nodesOnScreen = () => [...document.querySelectorAll("[data-node-id]")];
-const byFile = (file) => nodesOnScreen().find((el) => el.querySelector(".node-file").textContent === file);
+const byFile = (file) => nodesOnScreen().find((el) => el.dataset.file === file);
 const edges = () => [...document.querySelectorAll("path[data-edge]")].map((p) => p.dataset.edge);
 // Assert on the view's phase, not Member 3's status wording (which changes with UI polish).
 const phase = () => document.querySelector(".explore-view").dataset.phase;
 const highlightOf = (file) => byFile(file)?.dataset.highlight;
-const keyText = () => document.querySelector(".graph-key")?.textContent ?? null;
+// Key entries beyond the always-present importance legend (highlight kinds, clusters, path).
+const keyExtras = () => [...document.querySelectorAll(".graph-key-item:not(.graph-key-importance)")].map((e) => e.textContent);
 
-// Box geometry from the rendered DOM, for "no line through a third box" checks.
-const boxOf = (el) => ({ x: parseFloat(el.style.left), y: parseFloat(el.style.top), w: parseFloat(el.style.width), h: parseFloat(el.style.height) });
-const pathPoints = (d) => [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => ({ x: +m[1], y: +m[2] }));
-function firstCrossing(d, boxes) {
-  const pts = pathPoints(d);
-  for (let i = 1; i < pts.length; i++) {
-    for (let t = 0; t <= 1; t += 0.02) {
-      const p = { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
-      const hit = boxes.find((b) => p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h);
-      if (hit) return hit;
-    }
-  }
-  return null;
+// Circle geometry from the rendered DOM: centre from the <g transform>, radius from the dot.
+const circleOf = (el) => {
+  const [, x, y] = el.getAttribute("transform").match(/translate\(([-\d.]+) ([-\d.]+)\)/);
+  return { x: +x, y: +y, r: +el.querySelector(".gnode-dot").getAttribute("r") };
+};
+function minGap(els) {
+  const cs = els.map(circleOf);
+  let gap = Infinity;
+  for (let i = 0; i < cs.length; i++)
+    for (let j = i + 1; j < cs.length; j++) gap = Math.min(gap, Math.hypot(cs[i].x - cs[j].x, cs[i].y - cs[j].y) - cs[i].r - cs[j].r);
+  return gap;
 }
 
 describe("easy scenarios", () => {
@@ -62,7 +61,7 @@ describe("easy scenarios", () => {
     runScenario("chain");
     expect(nodesOnScreen()).toHaveLength(4);
     expect(edges()).toEqual(["n:src/b.js->n:src/a.js", "n:src/c.js->n:src/b.js", "n:src/d.js->n:src/c.js"]);
-    expect(document.querySelectorAll("path[data-routed]")).toHaveLength(0);
+    for (const p of document.querySelectorAll("path[data-edge]")) expect(p.getAttribute("d")).toMatch(/^M[-\d.]+,[-\d.]+ Q/);
     expect(highlightOf("src/d.js")).toBe("flagged");
     expect(highlightOf("src/c.js")).toBe("stale");
     expect(highlightOf("src/a.js")).toBe("active");
@@ -73,7 +72,7 @@ describe("easy scenarios", () => {
     runScenario("noIssueEmptyDirection");
     expect(phase()).toBe("done");
     expect(document.querySelector("[data-highlight]")).toBeNull();
-    expect(keyText()).toBeNull();
+    expect(keyExtras()).toEqual([]);
   });
 });
 
@@ -99,20 +98,13 @@ describe("hard scenarios", () => {
     const paths = [...document.querySelectorAll("path[data-edge]")];
     expect(paths).toHaveLength(600);
 
-    const boxById = new Map(els.map((el) => [el.dataset.nodeId, boxOf(el)]));
-    for (const p of paths) {
-      const [from, to] = p.dataset.edge.split("->");
-      const others = [...boxById].filter(([id]) => id !== from && id !== to).map(([, b]) => b);
-      const hit = firstCrossing(p.getAttribute("d"), others);
-      if (hit) throw new Error(`${p.dataset.edge} crosses the box at ${hit.x},${hit.y}`);
-    }
+    expect(minGap(els)).toBeGreaterThan(8); // no two circles overlap, even at 25 nodes
+    for (const p of paths) expect(p.getAttribute("d")).toMatch(/ Q/);
 
     expect(highlightOf("src/m0.js")).toBe("flagged");
     expect(highlightOf("src/m4.js")).toBe("stale");
     expect(highlightOf("src/m1.js")).toBe("active");
-    expect(keyText()).toContain("src/api#1");
-    expect(keyText()).toContain("src/db#1");
-    expect(keyText()).toContain("root#1");
+    expect(keyExtras()).toEqual(expect.arrayContaining(["src/api#1", "src/db#1", "root#1"]));
     expect(ms).toBeLessThan(5000);
   });
 
@@ -135,9 +127,9 @@ describe("hard scenarios", () => {
     const a = byFile("src/a.js");
     expect(a.dataset.nodeId).toBe("rnd-1");
     expect(a.dataset.activity).toBe("active");
-    expect(a.querySelector(".node-role").textContent).toBe("updated role");
+    expect(a.querySelector("title").textContent).toContain("updated role");
     expect(a.dataset.cluster).toBe("x");
-    expect(byFile("src/b.js").style.backgroundImage).toBe(a.style.backgroundImage);
+    expect(byFile("src/b.js").querySelector(".node-cluster-dot").getAttribute("fill")).toBe(a.querySelector(".node-cluster-dot").getAttribute("fill"));
   });
 
   it("highlights for unrendered/unknown files are ignored without errors", () => {
@@ -145,7 +137,7 @@ describe("hard scenarios", () => {
     expect(nodesOnScreen()).toHaveLength(25);
     expect(highlightOf("src/u0.js")).toBe("active");
     expect(document.querySelectorAll("[data-highlight]")).toHaveLength(1);
-    expect(keyText()).toBe("Active cluster");
+    expect(keyExtras()).toEqual(["Active cluster"]);
   });
 
   it("cluster split by the cap: the rendered member alone gets no cluster indicator", () => {
@@ -153,15 +145,16 @@ describe("hard scenarios", () => {
     const k24 = byFile("src/k24.js");
     expect(k24.dataset.cluster).toBeUndefined();
     expect(k24.querySelector(".node-cluster-dot")).toBeNull();
-    expect(keyText()).toBeNull();
+    expect(keyExtras()).toEqual([]);
   });
 
   it("more clusters than colours: all get indicators and colours cycle", () => {
     runScenario("manyClusters");
     expect(document.querySelectorAll(".node-cluster-dot")).toHaveLength(14);
-    expect(byFile("src/c0.js").style.backgroundImage).toBe(byFile("src/c10.js").style.backgroundImage); // cl0 vs cl5
-    expect(byFile("src/c0.js").style.backgroundImage).not.toBe(byFile("src/c2.js").style.backgroundImage);
-    expect(document.querySelectorAll(".graph-key-item")).toHaveLength(7);
+    const dot = (f) => byFile(f).querySelector(".node-cluster-dot").getAttribute("fill");
+    expect(dot("src/c0.js")).toBe(dot("src/c10.js")); // cl0 vs cl5
+    expect(dot("src/c0.js")).not.toBe(dot("src/c2.js"));
+    expect(keyExtras()).toHaveLength(7);
   });
 
   it("overlapping highlight reasons resolve flagged > stale > active", () => {
@@ -197,24 +190,6 @@ describe("hard scenarios", () => {
     expect(result.current.nodes).toEqual([]);
     expect(result.current.direction).toBeNull();
   });
-
-  it("layout + routing stay clean at 1 column and at very wide widths", () => {
-    const ns = Array.from({ length: 25 }, (_, i) => n(`w${i}.js`));
-    for (const width of [150, 520, 1000, 3200]) {
-      const { positions } = layout(ns, width);
-      const boxes = ns.map((x) => positions.get(x.id));
-      expect(new Set(boxes.map((b) => `${b.x},${b.y}`)).size).toBe(25); // no overlapping boxes
-      for (let i = 0; i < ns.length; i += 3) {
-        for (let j = 0; j < ns.length; j += 2) {
-          if (i === j) continue;
-          const others = boxes.filter((_, k) => k !== i && k !== j).map((b) => ({ ...b, w: 200, h: 72 }));
-          const { d } = routeEdge(boxes[i], boxes[j], others, 10);
-          const hit = firstCrossing(d, others);
-          if (hit) throw new Error(`width ${width}: w${i}->w${j} crosses ${hit.x},${hit.y}`);
-        }
-      }
-    }
-  });
 });
 
 describe("rare scenarios", () => {
@@ -222,14 +197,13 @@ describe("rare scenarios", () => {
     runScenario("weirdFields");
     expect(nodesOnScreen()).toHaveLength(8);
     const upper = byFile("src/UPPER.js");
-    expect(upper.style.borderColor).toBe("rgb(136, 136, 136)"); // unknown importance -> neutral
-    expect(upper.className).not.toContain("activity-stale");
-    expect(upper.style.boxShadow).not.toContain("16px"); // unknown activity -> no glow
+    expect(upper.querySelector(".gnode-dot").getAttribute("fill")).toBe("#6b6e82"); // unknown importance -> neutral
+    expect(upper.classList.contains("activity-stale")).toBe(false);
     expect(byFile("src/bare.js")).toBeTruthy();
     // "" is treated as "no cluster"; numeric 0 is a real cluster id.
     expect(byFile("src/empty-cluster-1.js").querySelector(".node-cluster-dot")).toBeNull();
     expect(byFile("src/zero-1.js").querySelector(".node-cluster-dot")).toBeTruthy();
-    expect(byFile("src/zero-1.js").style.backgroundImage).toBe(byFile("src/zero-2.js").style.backgroundImage);
+    expect(byFile("src/zero-1.js").querySelector(".node-cluster-dot").getAttribute("fill")).toBe(byFile("src/zero-2.js").querySelector(".node-cluster-dot").getAttribute("fill"));
     // circular imports both drawn, self-import dropped
     expect(edges().sort()).toEqual(["n:src/cyc-a.js->n:src/cyc-b.js", "n:src/cyc-b.js->n:src/cyc-a.js"]);
   });
@@ -239,7 +213,7 @@ describe("rare scenarios", () => {
     expect(byFile("src/ünïcødé/文件.js")).toBeTruthy();
     const xss = byFile("src/xss.js");
     expect(xss.querySelector("img, script")).toBeNull();
-    expect(xss.querySelector(".node-role").textContent).toContain("<img");
+    expect(xss.querySelector("title").textContent).toContain("<img");
     expect(document.querySelector(".issue-reveal b")).toBeNull();
     expect(window.__pwned).toBeUndefined();
     expect(highlightOf("src/xss.js")).toBe("flagged");
@@ -264,8 +238,8 @@ describe("rare scenarios", () => {
 
   it("authorCount 0 is explained in the tooltip as untouched in the commit window", () => {
     runScenario("untouched");
-    expect(byFile("src/cold.js").title).toContain("not touched in the analyzed commits");
-    expect(byFile("src/hot.js").title).toContain("authors: 7");
+    expect(byFile("src/cold.js").querySelector("title").textContent).toContain("not touched in the analyzed commits");
+    expect(byFile("src/hot.js").querySelector("title").textContent).toContain("authors: 7");
   });
 
   it("server error mid-stream: error panel shown, already-mapped nodes kept on screen", () => {

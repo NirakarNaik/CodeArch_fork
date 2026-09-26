@@ -39,6 +39,30 @@ export const SCENARIOS = {
     direction({ staleFiles: [], activeClusters: [] }),
   ],
 
+  // Realistic 18-file Express-style app: index.js entry, app.js as the core hub most files
+  // import, shared utils/config imports, and two orphans (legacy + a stray script).
+  realistic18: [
+    node("index.js", { importance: "core", imports: ["src/app.js", "config/env.js"] }),
+    node("src/app.js", { importance: "core", imports: ["src/routes/index.js", "src/middleware/auth.js", "src/middleware/logger.js", "config/env.js"] }),
+    node("config/env.js", { importance: "config" }),
+    node("src/routes/index.js", { importance: "core", imports: ["src/routes/users.js", "src/routes/orders.js", "src/routes/products.js", "src/app.js"] }),
+    node("src/middleware/auth.js", { imports: ["src/services/userService.js", "src/app.js", "src/utils/errors.js"] }),
+    node("src/middleware/logger.js", { imports: ["src/utils/log.js", "src/app.js"] }),
+    node("src/routes/users.js", { imports: ["src/services/userService.js", "src/app.js", "src/utils/errors.js"] }),
+    node("src/routes/orders.js", { imports: ["src/services/orderService.js", "src/app.js", "src/utils/errors.js"] }),
+    node("src/routes/products.js", { imports: ["src/services/productService.js", "src/app.js"] }),
+    node("src/services/userService.js", { imports: ["src/db/client.js", "src/utils/log.js"] }),
+    node("src/services/orderService.js", { imports: ["src/db/client.js", "src/services/userService.js", "src/utils/log.js"] }),
+    node("src/services/productService.js", { imports: ["src/db/client.js"] }),
+    node("src/db/client.js", { imports: ["config/env.js", "src/utils/log.js"] }),
+    node("src/utils/log.js", { importance: "support" }),
+    node("src/utils/errors.js", { importance: "support" }),
+    node("config/db.json", { importance: "config" }),
+    node("src/legacy/oldHandler.js", { activity: "stale", authorCount: 0 }),
+    node("scripts/seed.js", { imports: [] }),
+    done("src/legacy/oldHandler.js is never imported anywhere", ["src/legacy/oldHandler.js"]),
+  ],
+
   // ---------- hard ----------
   // 100 nodes, every one importing its predecessor: only the first 25 may render.
   flood: [...range(100).map((i) => node(`src/f${i}.js`, { imports: i ? [`src/f${i - 1}.js`] : [] })), done()],

@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, renderHook, act, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { useSSE } from "../hooks/useSSE.js";
-import GraphCanvas, { buildEdges, buildHighlights, layout, routeEdge, MAX_NODES } from "../GraphCanvas.jsx";
+import { buildHighlights } from "../GraphCanvas.jsx";
 import ExploreView, { DEMO_URL } from "../ExploreView.jsx";
 import { createMockEventSource, FAKE_EVENTS } from "../mocks/mockEventSource.js";
 
@@ -95,85 +95,6 @@ describe("useSSE", () => {
   });
 });
 
-describe("GraphCanvas", () => {
-  const edgeIds = (container) => [...container.querySelectorAll("path[data-edge]")].map((l) => l.dataset.edge);
-
-  it("renders a labeled box per node, colored by importance", () => {
-    const { container } = render(
-      <GraphCanvas nodes={[node("n1", "a.js", [], "core"), node("n2", "b.json", [], "config"), node("n3", "c.js", [], "support")]} />
-    );
-    expect(screen.getByText("a.js")).toBeTruthy();
-    expect(screen.getByText("role of b.json")).toBeTruthy();
-    const colors = [...container.querySelectorAll("[data-node-id]")].map((el) => el.style.borderColor);
-    expect(new Set(colors).size).toBe(3);
-  });
-
-  it("only draws an import line once the imported file is rendered", () => {
-    const a = node("n1", "src/a.js");
-    const b = node("n2", "src/b.js", ["src/a.js", "./src/c.js", "lodash"]);
-    const c = node("n3", "src/c.js");
-
-    const { container, rerender } = render(<GraphCanvas nodes={[b]} />);
-    expect(edgeIds(container)).toEqual([]);
-
-    rerender(<GraphCanvas nodes={[b, a]} />);
-    expect(edgeIds(container)).toEqual(["n2->n1"]);
-
-    rerender(<GraphCanvas nodes={[b, a, c]} />);
-    expect(edgeIds(container)).toEqual(["n2->n1", "n2->n3"]);
-  });
-
-  it("keeps existing nodes mounted (no re-fade) when new ones arrive", () => {
-    const a = node("n1", "a.js");
-    const { container, rerender } = render(<GraphCanvas nodes={[a]} />);
-    const first = container.querySelector('[data-node-id="n1"]');
-    rerender(<GraphCanvas nodes={[a, node("n2", "b.js")]} />);
-    expect(container.querySelector('[data-node-id="n1"]')).toBe(first);
-  });
-
-  it("ignores self-imports", () => {
-    expect(buildEdges([node("n1", "a.js", ["a.js"])])).toEqual([]);
-  });
-
-  it("keeps adjacent import lines straight but reroutes lines that would pass behind another box", () => {
-    // 1000px wide -> 4 columns. n0..n3 fill row 0, n4 sits under n0, n8 under n4.
-    const ns = Array.from({ length: 9 }, (_, i) => node(`n${i}`, `f${i}.js`));
-    const { positions } = layout(ns, 1000);
-    const others = (a, b) => ns.filter((n) => n.id !== a && n.id !== b).map((n) => positions.get(n.id));
-
-    expect(routeEdge(positions.get("n1"), positions.get("n0"), others("n1", "n0")).routed).toBe(false);
-    // Same row, skipping n1 and n2.
-    expect(routeEdge(positions.get("n3"), positions.get("n0"), others("n3", "n0")).routed).toBe(true);
-    // Same column, skipping n4.
-    const vertical = routeEdge(positions.get("n8"), positions.get("n0"), others("n8", "n0"));
-    expect(vertical.routed).toBe(true);
-  });
-
-  it("never draws an edge through a third box, for every pair in a 4x4 grid", () => {
-    const ns = Array.from({ length: 16 }, (_, i) => node(`n${i}`, `f${i}.js`));
-    const { positions } = layout(ns, 1000);
-    const inside = (p, box) => p.x > box.x && p.x < box.x + 200 && p.y > box.y && p.y < box.y + 72;
-    for (const a of ns) {
-      for (const b of ns) {
-        if (a === b) continue;
-        const others = ns.filter((n) => n !== a && n !== b).map((n) => positions.get(n.id));
-        for (const lane of [-10, 0, 10]) {
-          const { d } = routeEdge(positions.get(a.id), positions.get(b.id), others, lane);
-          const pts = [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => ({ x: +m[1], y: +m[2] }));
-          // Sample every segment (corner control points included) and require no sample inside another box.
-          for (let i = 1; i < pts.length; i++) {
-            for (let t = 0; t <= 1; t += 0.02) {
-              const p = { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
-              const hit = others.find((box) => inside(p, box));
-              if (hit) throw new Error(`${a.id}->${b.id} (lane ${lane}) crosses box at ${hit.x},${hit.y}: ${d}`);
-            }
-          }
-        }
-      }
-    }
-  });
-});
-
 describe("useSSE live-backend quirks", () => {
   it("merges a file re-emitted under a new random id instead of drawing a second box", () => {
     const ES = createMockEventSource();
@@ -211,7 +132,7 @@ describe("ExploreView", () => {
     act(() => src.open());
     act(() => src.emit("node", node("n1", "src/index.js")));
     expect(phase()).toBe("streaming");
-    expect(document.querySelector('[data-node-id="n1"]').textContent).toContain("src/index.js");
+    expect(document.querySelector('[data-node-id="n1"]').dataset.file).toBe("src/index.js");
 
     act(() => src.emit("done", ISSUE));
     expect(phase()).toBe("done");
@@ -310,63 +231,6 @@ describe("direction event, activity, clusters, highlights", () => {
     expect(ES.instances[0].readyState).toBe(2);
   });
 
-  it("renders stale nodes dimmed and active nodes with a glow, keeping the importance hue", () => {
-    const { container } = render(
-      <GraphCanvas
-        nodes={[
-          rich("n1", "a.js", { importance: "core", activity: "active" }),
-          rich("n2", "b.js", { importance: "core", activity: "stale" }),
-          node("n3", "c.js", [], "core"), // no activity field: plain rendering
-        ]}
-      />
-    );
-    const [active, stale, plain] = ["n1", "n2", "n3"].map((id) => container.querySelector(`[data-node-id="${id}"]`));
-    expect(active.className).toContain("activity-active");
-    expect(active.style.boxShadow).toContain("16px");
-    expect(stale.className).toContain("activity-stale");
-    expect(stale.style.boxShadow).not.toContain("16px");
-    // Same hue (core blue) for both; stale is the translucent variant.
-    expect(active.style.borderColor).toBe("rgb(94, 200, 248)");
-    expect(stale.style.borderColor).toMatch(/^rgba\(94, 200, 248, 0\.3/);
-    expect(plain.dataset.activity).toBeUndefined();
-  });
-
-  it("gives nodes sharing a clusterId the same tint + dot, and leaves singletons/null alone", () => {
-    const { container } = render(
-      <GraphCanvas
-        nodes={[
-          rich("n1", "a.js", { clusterId: "http" }),
-          rich("n2", "b.js", { clusterId: "http" }),
-          rich("n3", "c.js", { clusterId: "data" }),
-          rich("n4", "d.js", { clusterId: "data" }),
-          rich("n5", "e.js", { clusterId: "solo" }),
-          rich("n6", "f.js"),
-        ]}
-      />
-    );
-    const q = (id) => container.querySelector(`[data-node-id="${id}"]`);
-    expect(q("n1").style.backgroundImage).toBe(q("n2").style.backgroundImage);
-    expect(q("n1").style.backgroundImage).not.toBe(q("n3").style.backgroundImage);
-    expect(q("n3").style.backgroundImage).toBe(q("n4").style.backgroundImage);
-    expect(q("n1").querySelector(".node-cluster-dot")).toBeTruthy();
-    for (const id of ["n5", "n6"]) {
-      expect(q(id).style.backgroundImage).toBe("");
-      expect(q(id).querySelector(".node-cluster-dot")).toBeNull();
-    }
-    expect(screen.getByText("http")).toBeTruthy(); // key entry per cluster
-  });
-
-  it("caps rendering at 25 nodes and only draws edges between rendered ones", () => {
-    const ns = Array.from({ length: 30 }, (_, i) => rich(`n${i}`, `f${i}.js`, { imports: i === 0 ? ["f29.js"] : i === 1 ? ["f0.js"] : [] }));
-    const { container } = render(<GraphCanvas nodes={ns} />);
-    expect(MAX_NODES).toBe(25);
-    expect(container.querySelectorAll("[data-node-id]")).toHaveLength(25);
-    expect(container.querySelector('[data-node-id="n25"]')).toBeNull();
-    const edges = [...container.querySelectorAll("path[data-edge]")].map((p) => p.dataset.edge);
-    expect(edges).toEqual(["n1->n0"]); // n0 -> f29.js dropped: f29 isn't rendered
-    expect(screen.getByText("Showing the first 25 of 30 files.")).toBeTruthy();
-  });
-
   it("buildHighlights merges flagged/stale/active with flagged winning, normalizing paths", () => {
     const h = buildHighlights({ flagged: ["./x.js"], stale: ["x.js", "y.js", 42], active: ["y.js", "z.js"] });
     expect(Object.fromEntries(h)).toEqual({ "x.js": "flagged", "y.js": "stale", "z.js": "active" });
@@ -394,7 +258,7 @@ describe("direction event, activity, clusters, highlights", () => {
 
     act(() => src.emit("direction", DIRECTION));
     expect(["n1", "n2", "n3", "n4", "n5"].map(hl)).toEqual(["active", "active", "stale", "flagged", undefined]);
-    expect(document.querySelector('[data-node-id="n3"]').className).toContain("highlight-stale");
+    expect(document.querySelector('[data-node-id="n3"]').classList.contains("highlight-stale")).toBe(true);
     expect(screen.getByText("Flagged issue")).toBeTruthy();
     expect(screen.getByText("Active cluster")).toBeTruthy();
   });
