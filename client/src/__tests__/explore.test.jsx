@@ -231,9 +231,9 @@ describe("direction event, activity, clusters, highlights", () => {
     expect(ES.instances[0].readyState).toBe(2);
   });
 
-  it("buildHighlights merges flagged/stale/active with flagged winning, normalizing paths", () => {
-    const h = buildHighlights({ flagged: ["./x.js"], stale: ["x.js", "y.js", 42], active: ["y.js", "z.js"] });
-    expect(Object.fromEntries(h)).toEqual({ "x.js": "flagged", "y.js": "stale", "z.js": "active" });
+  it("buildHighlights keeps every kind per file in priority order, normalizing paths", () => {
+    const h = buildHighlights({ flagged: ["./x.js"], stale: ["x.js", "y.js", 42], active: ["y.js", "z.js", "x.js"] });
+    expect(Object.fromEntries(h)).toEqual({ "x.js": ["flagged", "stale", "active"], "y.js": ["stale", "active"], "z.js": ["active"] });
     expect(buildHighlights({ stale: "not-an-array" }).size).toBe(0);
   });
 

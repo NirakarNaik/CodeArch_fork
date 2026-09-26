@@ -23,7 +23,9 @@ const MIN_ARC = 84;
 const CLUSTER_COLORS = ["#f472b6", "#c084fc", "#a3e635", "#fdba74", "#94a3b8"];
 
 // One highlight system for every "look at this file" reason (ExploreView builds the map).
-// Earlier entries win when a file qualifies for several.
+// A file can carry several kinds. Flagged/stale draw the main ring (flagged outranks stale);
+// active-cluster membership is layered on as its own outer ring, so it stays visible even
+// when the file is also flagged or stale (the common case).
 export const HIGHLIGHTS = {
   flagged: { label: "Flagged issue", color: "#f0a500" },
   stale: { label: "Stale", color: "#fb923c" },
@@ -38,17 +40,54 @@ const normalize = (p) => (p || "").replace(/^\.?\//, "");
 const basename = (p) => normalize(p).split("/").pop() || p;
 const truncate = (s, n = 16) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-// { flagged: [...files], stale: [...], active: [...] } -> Map(normalized file -> kind)
+// { flagged: [...files], stale: [...], active: [...] } -> Map(normalized file -> kinds[]),
+// kinds in priority order (flagged, stale, active).
 export function buildHighlights(groups) {
   const map = new Map();
   for (const kind of Object.keys(HIGHLIGHTS)) {
     for (const file of Array.isArray(groups[kind]) ? groups[kind] : []) {
       if (typeof file !== "string") continue;
       const key = normalize(file);
-      if (!map.has(key)) map.set(key, kind);
+      const kinds = map.get(key) || [];
+      if (!kinds.includes(kind)) map.set(key, [...kinds, kind]);
     }
   }
   return map;
+}
+
+// kinds[] (or a single kind string) -> { main: ring kind or undefined, active, kinds }
+function splitHighlight(value) {
+  const kinds = Array.isArray(value) ? value : value ? [value] : [];
+  const active = kinds.includes("active");
+  return { main: kinds.find((k) => k !== "active") ?? (active ? "active" : undefined), active, kinds };
+}
+
+// "src/routes#1" -> "src/routes", "root#1" -> "root folder", "src#2" -> "src #2"
+function clusterPlace(id) {
+  const m = /^(.*)#(\d+)$/.exec(String(id));
+  const dir = m ? m[1] : String(id);
+  const place = dir === "root" || dir === "." || dir === "" ? "root folder" : dir.length > 22 ? "…" + dir.slice(-21) : dir;
+  return m && m[2] !== "1" ? place + " #" + m[2] : place;
+}
+
+// Human-readable cluster label for the key/tooltip, e.g. "Shared work: root folder (3 people)".
+// The author count comes from direction.activeClusters (matched by file); without it, no count.
+export function clusterLabel(id, authorCount) {
+  const people = Number.isFinite(authorCount) && authorCount > 0 ? " (" + authorCount + (authorCount === 1 ? " person)" : " people)") : "";
+  return "Shared work: " + clusterPlace(id) + people;
+}
+
+// clusterId -> authorCount, by matching each cluster's rendered files against activeClusters.
+export function clusterAuthorCounts(nodes, activeClusters) {
+  const counts = new Map();
+  const list = Array.isArray(activeClusters) ? activeClusters : [];
+  for (const node of nodes) {
+    if (node.clusterId == null || node.clusterId === "" || counts.has(node.clusterId)) continue;
+    const file = normalize(node.file);
+    const match = list.find((c) => Array.isArray(c?.files) && c.files.some((x) => typeof x === "string" && normalize(x) === file));
+    if (match && Number.isFinite(match.authorCount)) counts.set(node.clusterId, match.authorCount);
+  }
+  return counts;
 }
 
 // clusterId -> colour, only for clusters shared by at least two rendered nodes, assigned in
@@ -204,7 +243,8 @@ export function edgePath(a, b, ra, rb) {
 /**
  * Props:
  *   nodes            GraphNode[] in arrival order
- *   highlights       Map(file -> "flagged" | "stale" | "active") from ExploreView
+ *   highlights       Map(file -> kinds[]) from buildHighlights (flagged / stale / active)
+ *   activeClusters   direction.activeClusters ({ files, authorCount }[]) for cluster labels
  *   highlightedFiles string[]: files whose edges get the `.edge.highlighted` treatment
  * Ref API:
  *   focusNode(file | file[]): highlights the file's edges and pulses its node once per call.
@@ -212,7 +252,7 @@ export function edgePath(a, b, ra, rb) {
  * so the end-of-run emphasis works without the parent calling focusNode itself.
  */
 const GraphCanvas = forwardRef(function GraphCanvas(
-  { nodes: allNodes, highlights = EMPTY_MAP, highlightedFiles = EMPTY_LIST },
+  { nodes: allNodes, highlights = EMPTY_MAP, highlightedFiles = EMPTY_LIST, activeClusters = EMPTY_LIST },
   ref
 ) {
   const nodes = allNodes.length > MAX_NODES ? allNodes.slice(0, MAX_NODES) : allNodes;
@@ -241,7 +281,7 @@ const GraphCanvas = forwardRef(function GraphCanvas(
   // A new run clears any focus from the previous one.
   useEffect(() => setFocus({ files: new Set(), pulses: new Map() }), [rootId]);
 
-  const flaggedKey = [...highlights].filter(([, kind]) => kind === "flagged").map(([f]) => f).sort().join("\n");
+  const flaggedKey = [...highlights].filter(([, v]) => splitHighlight(v).kinds.includes("flagged")).map(([f]) => f).sort().join("\n");
   useEffect(() => {
     if (flaggedKey) focusNode(flaggedKey.split("\n"));
   }, [flaggedKey, focusNode]);
@@ -251,6 +291,7 @@ const GraphCanvas = forwardRef(function GraphCanvas(
   const radius = new Map(nodes.map((n) => [n.id, nodeRadius(n, fanIn.get(n.id))]));
   const edges = buildEdges(nodes);
   const clusters = clusterColors(nodes);
+  const clusterAuthors = clusterAuthorCounts(nodes, activeClusters);
 
   let outer = 0;
   for (const n of nodes) {
@@ -259,7 +300,9 @@ const GraphCanvas = forwardRef(function GraphCanvas(
   }
   const extent = Math.max(260, outer + 70);
 
-  const shownHighlights = Object.keys(HIGHLIGHTS).filter((kind) => nodes.some((n) => highlights.get(normalize(n.file)) === kind));
+  const shownHighlights = Object.keys(HIGHLIGHTS).filter((kind) =>
+    nodes.some((n) => splitHighlight(highlights.get(normalize(n.file))).kinds.includes(kind))
+  );
   const anyEmphasized = edges.some((e) => emphasized.has(normalize(e.from.file)) || emphasized.has(normalize(e.to.file)));
 
   return (
@@ -307,7 +350,8 @@ const GraphCanvas = forwardRef(function GraphCanvas(
               const p = positions.get(node.id);
               const r = radius.get(node.id);
               const file = normalize(node.file);
-              const highlight = highlights.get(file);
+              const { main: highlight, active: inActiveCluster } = splitHighlight(highlights.get(file));
+              const layeredActive = inActiveCluster && highlight !== "active";
               const clusterColor = clusters.get(node.clusterId);
               const pulse = focus.pulses.get(file) || 0;
               const details = [
@@ -321,8 +365,9 @@ const GraphCanvas = forwardRef(function GraphCanvas(
                   : node.authorCount != null
                     ? `authors: ${node.authorCount}`
                     : null,
-                node.clusterId != null && node.clusterId !== "" ? `cluster: ${node.clusterId}` : null,
+                node.clusterId != null && node.clusterId !== "" ? clusterLabel(node.clusterId, clusterAuthors.get(node.clusterId)) : null,
                 highlight ? `highlighted: ${HIGHLIGHTS[highlight].label}` : null,
+                layeredActive ? `also: ${HIGHLIGHTS.active.label}` : null,
               ];
               return (
                 <g
@@ -333,12 +378,14 @@ const GraphCanvas = forwardRef(function GraphCanvas(
                   data-activity={node.activity || undefined}
                   data-cluster={clusterColor ? node.clusterId : undefined}
                   data-highlight={highlight}
+                  data-active-cluster={inActiveCluster || undefined}
                   data-focused={focus.files.has(file) || undefined}
                   className={[
                     "gnode",
                     `importance-${node.importance}`,
                     node.activity && `activity-${node.activity}`,
                     highlight && `highlight highlight-${highlight}`,
+                    inActiveCluster && "in-active-cluster",
                     focus.files.has(file) && "is-focused",
                   ]
                     .filter(Boolean)
@@ -351,6 +398,9 @@ const GraphCanvas = forwardRef(function GraphCanvas(
                   <g className={`gnode-pulse${pulse ? (pulse % 2 ? " pulse-a" : " pulse-b") : ""}`}>
                     <g className="gnode-body">
                       {highlight && <circle className="gnode-ring" r={r + 5} style={{ "--hl": HIGHLIGHTS[highlight].color }} />}
+                      {layeredActive && (
+                        <circle className="gnode-ring-active" r={r + 9} style={{ "--hl": HIGHLIGHTS.active.color }} />
+                      )}
                       <circle className="gnode-dot" r={r} fill={COLORS[node.importance] || FALLBACK_COLOR} />
                       {clusterColor && <circle className="node-cluster-dot" cx={r * 0.72} cy={-r * 0.72} r={3.5} fill={clusterColor} />}
                     </g>
@@ -388,7 +438,7 @@ const GraphCanvas = forwardRef(function GraphCanvas(
           {[...clusters].map(([id, c]) => (
             <span key={id} className="graph-key-item">
               <span className="graph-key-tint graph-key-cluster" style={{ background: c }} aria-hidden="true" />
-              {id}
+              {clusterLabel(id, clusterAuthors.get(id))}
             </span>
           ))}
         </div>

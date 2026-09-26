@@ -104,7 +104,8 @@ describe("hard scenarios", () => {
     expect(highlightOf("src/m0.js")).toBe("flagged");
     expect(highlightOf("src/m4.js")).toBe("stale");
     expect(highlightOf("src/m1.js")).toBe("active");
-    expect(keyExtras()).toEqual(expect.arrayContaining(["src/api#1", "src/db#1", "root#1"]));
+    // src/db#1 holds m1/m5, the files listed in activeClusters (3 authors), so only it gets a count.
+    expect(keyExtras()).toEqual(expect.arrayContaining(["Shared work: src/api", "Shared work: src/db (3 people)", "Shared work: root folder"]));
     expect(ms).toBeLessThan(5000);
   });
 

@@ -101,8 +101,10 @@
   }
 }
 
-/* Activity (from commit history) layers on top of importance: stale files recede. */
-.graph-wrap .gnode.activity-stale {
+/* Activity (from commit history) layers on top of importance: stale files recede. Only the
+   dot and label dim, so highlight rings (incl. active-cluster) on a stale node stay visible. */
+.graph-wrap .gnode.activity-stale .gnode-dot,
+.graph-wrap .gnode.activity-stale .gnode-label {
   opacity: 0.45;
 }
 
@@ -233,4 +235,13 @@
   margin-top: 0.5rem;
   font-size: 0.75rem;
   color: var(--text-3, #9092a3);
+}
+
+/* Active-cluster membership layered on a flagged/stale node: solid outer ring, not pulsing,
+   so it reads as a second, independent signal next to the main highlight ring. */
+.graph-wrap .gnode-ring-active {
+  fill: none;
+  stroke: var(--hl);
+  stroke-width: 1.5;
+  stroke-opacity: 0.9;
 }
