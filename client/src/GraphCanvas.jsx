@@ -150,14 +150,6 @@ export default function GraphCanvas({ nodes }) {
 
   return (
     <div className="graph-wrap">
-      <div className="graph-legend">
-        {Object.entries(COLORS).map(([kind, color]) => (
-          <span key={kind} className="legend-item">
-            <span className="legend-swatch" style={{ background: color }} />
-            {kind}
-          </span>
-        ))}
-      </div>
       <div ref={containerRef} className="graph-canvas" style={{ height: height + GAP_Y / 2 }} data-testid="graph-canvas">
         <svg className="graph-edges" width={Math.max(width, 0)} height={height + GAP_Y / 2} aria-hidden="true">
           <defs>

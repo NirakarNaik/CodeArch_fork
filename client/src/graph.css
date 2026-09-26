@@ -1,5 +1,5 @@
-/* Scoped under .graph-wrap / .explore-view: main.jsx loads styles.css after this file,
-   so these selectors need the extra specificity to win over its grid rules. */
+/* Positioned layout for GraphCanvas. Scoped under .graph-wrap: main.jsx loads styles.css
+   after this file, so these selectors need the extra specificity to win over its grid rules. */
 
 .graph-wrap .graph-canvas {
   position: relative;
@@ -42,27 +42,6 @@
   overflow: hidden;
 }
 
-.graph-legend {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  text-transform: capitalize;
-}
-
-.legend-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-}
-
 @keyframes graphFadeIn {
   from {
     opacity: 0;
@@ -70,31 +49,4 @@
   to {
     opacity: 1;
   }
-}
-
-/* Demo Mode toggle pinned to the top-right corner. */
-.explore-view .demo-toggle {
-  position: fixed;
-  top: 1rem;
-  right: 1rem;
-  z-index: 10;
-  padding: 0.4rem 0.75rem;
-  border-radius: 999px;
-  background: var(--panel);
-  border: 1px solid #333;
-  cursor: pointer;
-  user-select: none;
-}
-
-.explore-view .demo-toggle.on {
-  border-color: #f5b942;
-  color: #f5b942;
-}
-
-.explore-view .status-label.error {
-  color: #f87171;
-}
-
-.explore-view .explore-header {
-  padding-right: 9rem; /* keep header content clear of the fixed toggle */
 }

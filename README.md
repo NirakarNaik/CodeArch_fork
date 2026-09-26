@@ -9,14 +9,19 @@ Built for Bangalore | Claude Opus Build Day.
 ## Setup
 
 ```bash
-npm run install-all
-cp .env.example server/.env
-# then edit server/.env and add your ANTHROPIC_API_KEY
+cp .env.example server/.env   # optional: add ANTHROPIC_API_KEY for live mode
 npm run dev
 ```
 
-- Client: http://localhost:5173
-- Server: http://localhost:8787 (proxied from the client via Vite, see client/vite.config.js)
+Then open **http://localhost:8787**. That one command installs dependencies,
+builds the client and starts the Express server, which serves both the app and
+`/api/*` from the same origin.
+
+- **Demo mode** needs no API key: click _Try interactive demo_ on the landing page.
+- **Live mode** needs `ANTHROPIC_API_KEY` in `server/.env`. Without it, the app
+  explains that live mode is unavailable and offers the demo.
+- **Hot reload while developing UI:** `npm install && npm run dev:hmr`, then open
+  http://localhost:5173 (Vite proxies `/api` to the server on 8787).
 
 ## How it works
 
@@ -28,9 +33,9 @@ npm run dev
    it happens, and rendered live as a graph node.
 4. At the end, Claude names one specific real issue it found (or says honestly
    that it found nothing notable).
-5. A "Demo Mode" toggle replays a pre-recorded run from `server/demo-log.json`
-   instead of a live call — use this as your fallback if wifi/API is unreliable
-   during the actual demo.
+5. "Try interactive demo" (landing page, or the error screen) replays a
+   pre-recorded run from `server/demo-log.json` instead of a live call — use
+   this as your fallback if wifi/API is unreliable during the actual demo.
 
 ## File ownership (see the team build plan for full detail)
 

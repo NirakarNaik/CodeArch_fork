@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSSE } from "./hooks/useSSE.js";
 import GraphCanvas from "./GraphCanvas.jsx";
 import IssueReveal from "./IssueReveal.jsx";
+import ExploreStatus from "./ExploreStatus.jsx";
 import { createMockEventSource, FAKE_EVENTS } from "./mocks/mockEventSource.js";
-import "./graph.css";
 
 export const DEMO_URL = "/api/demo/replay";
 
@@ -11,30 +11,45 @@ export const DEMO_URL = "/api/demo/replay";
 const MOCK_MODE = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("mock");
 const MockEventSource = MOCK_MODE ? createMockEventSource({ events: FAKE_EVENTS }) : undefined;
 
+// Resolves to { sseUrl } or rejects with an Error whose .code is an ExploreStatus ERROR_COPY key
+// ("live_unavailable", "clone_failed", "network", ...).
 function startSession(repoUrl) {
   if (MOCK_MODE) return Promise.resolve({ sseUrl: "/api/explore/stream/mock" });
+  const fail = (code) => Object.assign(new Error(code), { code });
   return fetch("/api/explore/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ repoUrl }),
-  }).then(async (r) => {
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || !data.sseUrl) throw new Error(data.error === "clone_failed" ? "Could not clone that repo." : "Could not start exploration.");
-    return data;
-  });
+  }).then(
+    async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.sseUrl) return data;
+      throw fail(data.error || `http_${r.status}`);
+    },
+    (err) => {
+      console.error("[explore] start request failed:", err);
+      throw fail("network");
+    }
+  );
 }
 
-export default function ExploreView({ repoUrl, onReset, EventSourceImpl = MockEventSource }) {
-  const [demoMode, setDemoMode] = useState(false);
+export default function ExploreView({ repoUrl, demo = false, onReset, EventSourceImpl = MockEventSource }) {
+  const [demoMode, setDemoMode] = useState(demo || !repoUrl);
   const [streamUrl, setStreamUrl] = useState(null);
+  // Why /api/explore/start failed (e.g. "live_unavailable", "clone_failed").
+  // Without this a failed start left streamUrl null and the view stuck loading.
   const [startError, setStartError] = useState(null);
-  // One clone per repo URL: survives StrictMode's double effect run and demo toggling.
+  // Bumped to force a fresh stream (replay / retry) even when the URL is the same.
+  const [run, setRun] = useState(0);
+  // One clone per repo URL: StrictMode runs this effect twice on mount, and without the
+  // cache each run would POST /start and clone the repo again.
   const sessionRef = useRef({ repoUrl: null, promise: null });
 
   useEffect(() => {
     setStartError(null);
+
     if (demoMode) {
-      setStreamUrl(DEMO_URL);
+      setStreamUrl(run ? `${DEMO_URL}?run=${run}` : DEMO_URL);
       return undefined;
     }
 
@@ -50,39 +65,38 @@ export default function ExploreView({ repoUrl, onReset, EventSourceImpl = MockEv
       })
       .catch((err) => {
         sessionRef.current = { repoUrl: null, promise: null }; // allow a retry
-        if (!cancelled) setStartError(err.message);
+        if (!cancelled) setStartError(err.code || "network");
       });
 
     return () => {
       cancelled = true;
     };
-  }, [demoMode, repoUrl]);
+  }, [demoMode, repoUrl, run]);
 
-  const { nodes, issue, status, errorMessage } = useSSE(streamUrl, { EventSourceImpl });
+  const { nodes, issue, status } = useSSE(streamUrl, { EventSourceImpl });
 
-  const failed = startError || status === "error";
-  const mapped = `${nodes.length} file${nodes.length === 1 ? "" : "s"} mapped`;
-  let label;
-  if (startError) label = `${startError} Try Demo Mode.`;
-  else if (status === "connecting") label = demoMode ? "Loading demo…" : "Cloning repo…";
-  else if (status === "streaming") label = `Exploring… ${mapped}`;
-  else if (status === "done") label = `Done — ${mapped}`;
-  else label = `${errorMessage || "Live exploration failed."}${demoMode ? "" : " Try Demo Mode."}`;
+  // useSSE resets while streamUrl is null, so only trust it once a stream for this run exists.
+  const streaming = Boolean(streamUrl) && !startError;
+  const phase = startError ? "error" : streamUrl ? status : "starting";
+
+  const runDemo = () => {
+    setDemoMode(true);
+    setRun((n) => n + 1);
+  };
 
   return (
-    <div className="explore-view">
-      <div className="explore-header">
-        <span className={`status-label${failed ? " error" : ""}`} role="status">
-          {label}
-        </span>
-        <button onClick={onReset}>Explore another repo</button>
-      </div>
-      <label className={`demo-toggle${demoMode ? " on" : ""}`}>
-        <input type="checkbox" checked={demoMode} onChange={(e) => setDemoMode(e.target.checked)} />
-        Demo Mode
-      </label>
-      <GraphCanvas nodes={nodes} />
-      {issue && <IssueReveal issue={issue} />}
+    <div className="explore-view" data-phase={phase}>
+      <ExploreStatus
+        phase={phase}
+        demo={demoMode}
+        repoUrl={repoUrl}
+        nodes={streaming ? nodes : []}
+        errorCode={startError}
+        onTryDemo={runDemo}
+        onReset={onReset}
+      />
+      {streaming && <GraphCanvas nodes={nodes} />}
+      {streaming && issue && <IssueReveal issue={issue} />}
     </div>
   );
 }

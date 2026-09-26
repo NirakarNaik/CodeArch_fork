@@ -1,5 +1,6 @@
+import { StrictMode } from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, renderHook, act, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, renderHook, act, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { useSSE } from "../hooks/useSSE.js";
 import GraphCanvas, { buildEdges, layout, routeEdge } from "../GraphCanvas.jsx";
 import ExploreView, { DEMO_URL } from "../ExploreView.jsx";
@@ -182,55 +183,78 @@ describe("useSSE live-backend quirks", () => {
 });
 
 describe("ExploreView", () => {
+  const status = () => within(document.querySelector(".analysis-panel")).getByRole("status").textContent;
+
   beforeEach(() => {
+    // IssueReveal scrolls itself into view; jsdom doesn't implement scrollIntoView.
+    Element.prototype.scrollIntoView ||= () => {};
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({ sessionId: "s1", sseUrl: "/api/explore/stream/s1" }),
     });
   });
 
-  it("shows cloning -> exploring -> done and renders nodes live from the real stream", async () => {
+  it("goes cloning -> analyzing -> complete and renders nodes live from the real stream", async () => {
     const ES = createMockEventSource();
     render(<ExploreView repoUrl="https://github.com/o/r" onReset={() => {}} EventSourceImpl={ES} />);
-    expect(screen.getByRole("status").textContent).toMatch(/Cloning/);
+    expect(status()).toMatch(/Cloning repository/);
 
     await act(async () => {});
     const src = ES.instances.at(-1);
     expect(src.url).toBe("/api/explore/stream/s1");
-    expect(fetch).toHaveBeenCalledTimes(1);
 
     act(() => src.open());
-    expect(screen.getByRole("status").textContent).toMatch(/Exploring/);
     act(() => src.emit("node", node("n1", "src/index.js")));
-    expect(screen.getByText("src/index.js")).toBeTruthy();
+    expect(status()).toMatch(/Analyzing repository/);
+    expect(document.querySelector('[data-node-id="n1"]').textContent).toContain("src/index.js");
 
     act(() => src.emit("done", ISSUE));
-    expect(screen.getByRole("status").textContent).toBe("Done — 1 file mapped");
+    expect(status()).toMatch(/Analysis complete/);
   });
 
-  it("Demo Mode toggle switches the stream between the real URL and /api/demo/replay", async () => {
+  it("clones only once under StrictMode's double effect run", async () => {
+    const ES = createMockEventSource();
+    render(
+      <StrictMode>
+        <ExploreView repoUrl="https://github.com/o/r" onReset={() => {}} EventSourceImpl={ES} />
+      </StrictMode>
+    );
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(ES.instances.at(-1).url).toBe("/api/explore/stream/s1");
+  });
+
+  it("'Run demo instead' switches from the live stream to /api/demo/replay and shows the demo badge", async () => {
     const ES = createMockEventSource();
     render(<ExploreView repoUrl="https://github.com/o/r" onReset={() => {}} EventSourceImpl={ES} />);
     await act(async () => {});
-    expect(ES.instances.at(-1).url).toBe("/api/explore/stream/s1");
+    const live = ES.instances.at(-1);
+    expect(live.url).toBe("/api/explore/stream/s1");
 
-    const toggle = screen.getByLabelText("Demo Mode");
-    fireEvent.click(toggle);
-    const demo = ES.instances.at(-1);
-    expect(demo.url).toBe(DEMO_URL);
-    expect(ES.instances.at(-2).readyState).toBe(2);
-
-    fireEvent.click(toggle);
-    await act(async () => {});
-    expect(ES.instances.at(-1).url).toBe("/api/explore/stream/s1");
-    expect(demo.readyState).toBe(2);
-    expect(fetch).toHaveBeenCalledTimes(1); // session reused, no second clone
+    fireEvent.click(screen.getByRole("button", { name: "Run demo instead" }));
+    expect(ES.instances.at(-1).url).toMatch(new RegExp(`^${DEMO_URL}`));
+    expect(live.readyState).toBe(2);
+    expect(screen.getByText("Demo replay")).toBeTruthy();
   });
 
-  it("surfaces a failed clone instead of spinning on 'Cloning'", async () => {
-    fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: "clone_failed" }) });
+  it("starts straight in demo mode from the landing page's demo button and can replay", () => {
+    const ES = createMockEventSource();
+    render(<ExploreView repoUrl={null} demo onReset={() => {}} EventSourceImpl={ES} />);
+    expect(fetch).not.toHaveBeenCalled();
+    const first = ES.instances.at(-1);
+    expect(first.url).toBe(DEMO_URL);
+
+    act(() => first.emit("done", ISSUE));
+    fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+    expect(first.readyState).toBe(2);
+    expect(ES.instances.at(-1).url).toBe(`${DEMO_URL}?run=1`);
+  });
+
+  it("surfaces a failed clone with the matching error copy instead of spinning", async () => {
+    fetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: "clone_failed" }) });
     render(<ExploreView repoUrl="https://github.com/o/r" onReset={() => {}} EventSourceImpl={createMockEventSource()} />);
     await act(async () => {});
-    expect(screen.getByRole("status").textContent).toMatch(/Could not clone.*Demo Mode/);
+    expect(status()).toMatch(/couldn't be cloned/);
+    expect(screen.getByRole("button", { name: /Try demo/ })).toBeTruthy();
   });
 });
