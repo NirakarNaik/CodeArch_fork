@@ -53,7 +53,19 @@ function countFiles(dir, limit) {
   return count;
 }
 
+// Express 4 doesn't catch rejected promises from async handlers: an uncaught
+// throw becomes an unhandledRejection and kills the whole server. Any
+// unexpected error here answers with clone_failed instead.
 router.post("/start", async (req, res) => {
+  try {
+    await startSession(req, res);
+  } catch (err) {
+    console.error("Start failed unexpectedly:", err);
+    if (!res.headersSent) res.status(500).json({ error: "clone_failed" });
+  }
+});
+
+async function startSession(req, res) {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   if (!GITHUB_URL_RE.test(repoUrl)) {
     return res.status(400).json({ error: "invalid_url" });
@@ -82,7 +94,18 @@ router.post("/start", async (req, res) => {
     return res.status(502).json({ error: "clone_failed" });
   }
 
-  if (countFiles(rootDir, MAX_REPO_FILES) > MAX_REPO_FILES) {
+  // git has reported success yet left no checkout (seen under memory
+  // pressure), so verify before touching the folder.
+  let fileCount;
+  try {
+    if (!fs.existsSync(path.join(rootDir, ".git"))) throw new Error("checkout missing after clone");
+    fileCount = countFiles(rootDir, MAX_REPO_FILES);
+  } catch (err) {
+    console.error("Clone failed:", err.message);
+    removeDir(rootDir);
+    return res.status(502).json({ error: "clone_failed" });
+  }
+  if (fileCount > MAX_REPO_FILES) {
     removeDir(rootDir);
     return res.status(413).json({ error: "repo_too_large" });
   }
@@ -107,7 +130,7 @@ router.post("/start", async (req, res) => {
   const timer = setTimeout(() => endSession(sessionId), SESSION_TTL_MS);
   sessions.set(sessionId, { rootDir, running: false, timer, history });
   res.json({ sessionId, sseUrl: `/api/explore/stream/${sessionId}` });
-});
+}
 
 router.get("/stream/:sessionId", async (req, res) => {
   const { sessionId } = req.params;
